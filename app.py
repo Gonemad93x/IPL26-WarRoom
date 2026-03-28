@@ -445,7 +445,7 @@ def _fetch_match_list():
 def _fetch_scorecard(match_id):
     try:
         r = requests.get(
-            f"https://{RAPIDAPI_HOST}/mcenter/v1/{match_id}/scard",
+            f"https://{RAPIDAPI_HOST}/mcenter/v1/{match_id}/hscard",
             headers=API_HEADERS, timeout=8,
         )
         if r.status_code == 200:
@@ -509,7 +509,7 @@ def _parse_cricbuzz_live(raw_list: dict) -> list:
 
 def _parse_cricbuzz_scorecard(raw_sc: dict, match_meta: dict) -> tuple:
     """
-    Parse Cricbuzz /mcenter/v1/{id}/scard response into (sc_dict, batters, bowlers).
+    Parse Cricbuzz /mcenter/v1/{id}/hscard response into (sc_dict, batters, bowlers).
     Returns (None, [], []) on failure.
     """
     try:
@@ -1261,10 +1261,7 @@ bowlers = []
 
 if not show_demo:
     with st.spinner("Synchronizing with Live Match Feed..."):
-        sc, batters, bowlers = resolve_live_match("RCB", "SRH", debug=debug_mode)
-        if sc is None:
-            sc, batters, bowlers = resolve_live_match("IPL", "", debug=False)
-
+        sc, batters, bowlers = resolve_live_match(debug=debug_mode)
 if sc is None:
     st.info("📡 No live IPL match found right now. Displaying pre-match demo metrics.")
     sc = demo_sc()
