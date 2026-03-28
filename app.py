@@ -1,8 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║   GOD'S EYE v3.3 — IPL ELITE MATCH CENTER (FULL UNIFIED)         ║
+║   GOD'S EYE v3.4 — IPL ELITE MATCH CENTER (FULL UNIFIED)         ║
 ║   Operator: Uday Maddila                                         ║
-║   Technical Patch: Clickable News + IST Time + 2026 Standards   ║
+║   Patch v3.4: Live data transformer + fallback chain             ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -96,20 +96,18 @@ div.block-container { padding:1.6rem 2.4rem 3rem !important; max-width:1440px; }
 .gc-amber  { border-left: 3px solid var(--amber);  }
 .gc-purple { border-left: 3px solid var(--purple); }
 
-/* CLICKABLE NEWS INTERACTION */
 .ni a { text-decoration: none; transition: color 0.2s; }
 .ni a:hover { color: var(--cyan) !important; text-decoration: underline !important; }
 
-/* PRESSURE SENSOR PULSE [v3.3] */
-.clutch-alert { 
-    animation: pulse-red 2s infinite; 
-    border-color: var(--red) !important; 
+.clutch-alert {
+    animation: pulse-red 2s infinite;
+    border-color: var(--red) !important;
     background: rgba(255,62,62,0.08) !important;
 }
-@keyframes pulse-red { 
-    0% { box-shadow: 0 0 0 0 rgba(255,62,62,0.4); } 
-    70% { box-shadow: 0 0 0 10px rgba(255,62,62,0); } 
-    100% { box-shadow: 0 0 0 0 rgba(255,62,62,0); } 
+@keyframes pulse-red {
+    0% { box-shadow: 0 0 0 0 rgba(255,62,62,0.4); }
+    70% { box-shadow: 0 0 0 10px rgba(255,62,62,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,62,62,0); }
 }
 
 .badge {
@@ -230,13 +228,213 @@ def _ax2(title=""):
 
 
 # ─────────────────────────────────────────────────────────────────
-# 4. DATA LAYER
+# 4. DATA LAYER  (v3.4 — live transformer + fallback)
 # ─────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
-def fetch_live_matches():
+
+TEAM_MAP = {
+    "royal challengers bengaluru": "RCB",
+    "royal challengers bangalore":  "RCB",
+    "sunrisers hyderabad":          "SRH",
+    "mumbai indians":               "MI",
+    "chennai super kings":          "CSK",
+    "kolkata knight riders":        "KKR",
+    "rajasthan royals":             "RR",
+    "delhi capitals":               "DC",
+    "punjab kings":                 "PBKS",
+    "lucknow super giants":         "LSG",
+    "gujarat titans":               "GT",
+}
+
+def _team_short(name: str) -> str:
+    n = (name or "").lower().strip()
+    for full, short in TEAM_MAP.items():
+        if full in n:
+            return short
+    parts = (name or "").split()
+    return "".join(p[0] for p in parts[:3]).upper() if parts else "UNK"
+
+def _int(v, default=0):
     try:
-        r = requests.get(f"https://{RAPIDAPI_HOST}/cricket-match-list",
-                         headers=API_HEADERS, timeout=8)
+        return int(str(v).split("/")[0].strip())
+    except Exception:
+        return default
+
+def _float(v, default=0.0):
+    try:
+        return float(str(v).strip())
+    except Exception:
+        return default
+
+def _win_prob(runs_scored, wickets_fallen, overs_faced, target, total_overs=20):
+    if target <= 0:
+        return 50, 50
+    balls_used   = int(overs_faced) * 6 + round((overs_faced % 1) * 10)
+    balls_total  = total_overs * 6
+    balls_left   = max(0, balls_total - balls_used)
+    runs_needed  = target - runs_scored
+    wickets_left = 10 - wickets_fallen
+    if runs_needed <= 0:
+        return 95, 5
+    if balls_left <= 0:
+        return 5, 95
+    wkt_resource   = wickets_left / 10
+    ball_resource  = balls_left / balls_total
+    resource_left  = wkt_resource * 0.5 + ball_resource * 0.5
+    run_difficulty = (runs_needed * 6 / balls_left) / 10.0
+    prob = 50 + (resource_left - run_difficulty) * 80
+    prob = max(5, min(95, int(prob)))
+    return prob, 100 - prob
+
+def _parse_innings_dict(inn: dict) -> dict:
+    label = inn.get("inning", inn.get("bat", inn.get("team", "")))
+    r  = _int(inn.get("r", inn.get("runs", 0)))
+    w  = _int(inn.get("w", inn.get("wickets", 0)))
+    o  = _float(inn.get("o", inn.get("overs", 0)))
+    rr = round(r / o, 2) if o > 0 else 0.0
+    return {
+        "name":    label,
+        "short":   _team_short(label),
+        "score":   str(r),
+        "wickets": str(w),
+        "overs":   str(o),
+        "rr":      str(rr),
+        "_r": r, "_w": w, "_o": o,
+    }
+
+def _extract_batters_from_raw(raw: dict) -> list:
+    batters = []
+    try:
+        data = raw.get("data", raw)
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        scorecard = data.get("scorecard", data.get("score", []))
+        if not scorecard:
+            return []
+        last_inn  = scorecard[-1]
+        inn_label = last_inn.get("inning", "")
+        team      = _team_short(inn_label)
+        for b in last_inn.get("batting", []):
+            name  = b.get("batsman", b.get("name", ""))
+            if not name:
+                continue
+            runs  = _int(b.get("r",  b.get("runs",  0)))
+            balls = max(1, _int(b.get("b", b.get("balls", 1))))
+            fours = _int(b.get("4s", b.get("fours", 0)))
+            sixes = _int(b.get("6s", b.get("sixes", 0)))
+            sr    = round(runs / balls * 100, 1)
+            form  = min(100, int(sr * 0.5 + runs * 0.3 + fours * 2 + sixes * 3))
+            p50   = min(99, max(5, 99 if runs >= 50 else int(runs / 50 * 100)))
+            p30   = min(99, max(5, 99 if runs >= 30 else int(runs / 30 * 100)))
+            batters.append({
+                "name": name, "team": team,
+                "runs": runs, "balls": balls,
+                "sr": sr, "4s": fours, "6s": sixes,
+                "form": form, "p50": p50, "p30": p30,
+            })
+    except Exception:
+        pass
+    return batters if len(batters) >= 2 else []
+
+def _extract_bowlers_from_raw(raw: dict) -> list:
+    bowlers = []
+    try:
+        data = raw.get("data", raw)
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        scorecard    = data.get("scorecard", data.get("score", []))
+        if not scorecard:
+            return []
+        last_inn     = scorecard[-1]
+        inn_label    = last_inn.get("inning", "")
+        batting_team = _team_short(inn_label)
+        first_inn    = scorecard[0]
+        first_label  = first_inn.get("inning", "")
+        bowling_team = _team_short(first_label) if batting_team != _team_short(first_label) else batting_team
+        for b in last_inn.get("bowling", []):
+            name  = b.get("bowler", b.get("name", ""))
+            if not name:
+                continue
+            overs  = _float(b.get("o",  b.get("overs",   0)))
+            runs   = _int(b.get("r",    b.get("runs",    0)))
+            wkts   = _int(b.get("w",    b.get("wickets", 0)))
+            maiden = _int(b.get("m",    b.get("maidens", 0)))
+            econ   = round(runs / overs, 2) if overs > 0 else 0.0
+            dot    = min(99, int(maiden * 12 + max(0, 8 - econ) * 4))
+            avg    = round(runs / wkts, 1) if wkts > 0 else 0.0
+            threat = min(99, int(wkts * 25 + max(0, 10 - econ) * 4 + dot * 0.3))
+            bowlers.append({
+                "name": name, "team": bowling_team,
+                "overs": overs, "runs": runs, "wkts": wkts,
+                "econ": econ, "dot": dot, "threat": threat, "avg": avg,
+            })
+    except Exception:
+        pass
+    return bowlers if len(bowlers) >= 2 else []
+
+def _transform_scorecard(raw: dict):
+    if not raw:
+        return None
+    try:
+        data = raw.get("data", raw)
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        if not data:
+            return None
+        name   = data.get("name",   data.get("matchDesc",   ""))
+        venue  = data.get("venue",  data.get("groundName",  ""))
+        status = data.get("status", data.get("matchStatus", "LIVE"))
+        score  = data.get("score",  data.get("scorecard",   []))
+        if not score:
+            return None
+        inn1_raw = score[0] if len(score) > 0 else {}
+        inn2_raw = score[1] if len(score) > 1 else {}
+        inn1 = _parse_innings_dict(inn1_raw)
+        inn2 = _parse_innings_dict(inn2_raw) if inn2_raw else None
+        second_innings = inn2 is not None
+
+        bat_inn   = inn2 if second_innings else inn1
+        field_inn = inn1 if second_innings else {
+            "name": "", "short": "TBD",
+            "score": "—", "wickets": "—", "overs": "0.0", "rr": "0.0",
+            "_r": 0, "_w": 0, "_o": 0.0,
+        }
+
+        target      = inn1["_r"] + 1 if second_innings else 0
+        bat_r       = bat_inn["_r"]
+        bat_w       = bat_inn["_w"]
+        bat_o       = bat_inn["_o"]
+        runs_needed = max(0, target - bat_r) if target > 0 else 0
+        balls_used  = int(bat_o) * 6 + round((bat_o % 1) * 10)
+        balls_left  = max(0, 120 - balls_used)
+        req_rr      = round((runs_needed * 6) / balls_left, 2) if (balls_left > 0 and runs_needed > 0) else 0.0
+        phase       = "powerplay" if bat_o <= 6 else ("death" if bat_o >= 15 else "middle")
+        bat_wp, fld_wp = _win_prob(bat_r, bat_w, bat_o, target) if target > 0 else (50, 50)
+        rcb_batting = "RCB" in bat_inn["short"]
+
+        return {
+            "match":        name,
+            "venue":        venue,
+            "status":       status,
+            "rcb":          bat_inn   if rcb_batting else field_inn,
+            "srh":          field_inn if rcb_batting else bat_inn,
+            "target":       target,
+            "required":     runs_needed,
+            "req_rr":       req_rr,
+            "balls_left":   balls_left,
+            "phase":        phase,
+            "rcb_win_prob": bat_wp  if rcb_batting else fld_wp,
+            "srh_win_prob": fld_wp  if rcb_batting else bat_wp,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
+def _fetch_match_list():
+    try:
+        r = requests.get(
+            f"https://{RAPIDAPI_HOST}/cricket-match-list",
+            headers=API_HEADERS, timeout=8,
+        )
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -244,10 +442,14 @@ def fetch_live_matches():
     return None
 
 @st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
-def fetch_match_score(match_id):
+def _fetch_scorecard(match_id):
     try:
-        r = requests.get(f"https://{RAPIDAPI_HOST}/cricket-match-scorecard",
-                         headers=API_HEADERS, params={"id": match_id}, timeout=8)
+        r = requests.get(
+            f"https://{RAPIDAPI_HOST}/cricket-match-scorecard",
+            headers=API_HEADERS,
+            params={"id": match_id},
+            timeout=8,
+        )
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -256,15 +458,62 @@ def fetch_match_score(match_id):
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_news():
-    url = "https://news.google.com/rss/search?q=IPL+2026+RCB+SRH+injury+squad&hl=en-IN&gl=IN&ceid=IN:en"
+    url = "https://news.google.com/rss/search?q=IPL+2026&hl=en-IN&gl=IN&ceid=IN:en"
     try:
         feed = feedparser.parse(url)
-        return [{"title": e.get("title",""),
-                 "source": e.get("source",{}).get("title",""),
-                 "published": e.get("published",""),
-                 "link": e.get("link", "#")} for e in feed.entries[:8]]
+        return [
+            {
+                "title":     e.get("title", ""),
+                "source":    e.get("source", {}).get("title", ""),
+                "published": e.get("published", ""),
+                "link":      e.get("link", "#"),
+            }
+            for e in feed.entries[:8]
+        ]
     except Exception:
         return []
+
+def resolve_live_match(team_a="RCB", team_b="SRH", debug=False):
+    raw_list = _fetch_match_list()
+    if debug and raw_list:
+        with st.expander("🔍 RAW — Match List", expanded=False):
+            st.json(raw_list)
+    if not raw_list:
+        return None, [], []
+    matches = raw_list.get("data", raw_list)
+    if isinstance(matches, dict):
+        matches = [matches]
+    for match in (matches or []):
+        name_upper = (
+            (match.get("name", "") or "") +
+            (match.get("series", "") or "") +
+            (match.get("matchDesc", "") or "")
+        ).upper()
+        is_ipl = "IPL" in name_upper or "INDIAN PREMIER" in name_upper
+        has_a  = (team_a.upper() in name_upper) if team_a else True
+        has_b  = (team_b.upper() in name_upper) if team_b else True
+        if not (is_ipl and (has_a or has_b)):
+            continue
+        mid = match.get("id", match.get("matchId", ""))
+        if not mid:
+            continue
+        raw_sc = _fetch_scorecard(str(mid))
+        if debug and raw_sc:
+            with st.expander(f"🔍 RAW — Scorecard ({mid})", expanded=False):
+                st.json(raw_sc)
+        if not raw_sc:
+            continue
+        inner  = raw_sc.get("data", raw_sc)
+        if isinstance(inner, list):
+            inner = inner[0] if inner else {}
+        status = str(inner.get("status", "")).lower()
+        if "upcom" in status or "yet to" in status or "preview" in status:
+            continue
+        sc      = _transform_scorecard(raw_sc)
+        batters = _extract_batters_from_raw(raw_sc)
+        bowlers = _extract_bowlers_from_raw(raw_sc)
+        return sc, batters, bowlers
+    return None, [], []
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -492,15 +741,16 @@ def chart_batter_compare(batters):
 # 7. UI RENDERERS
 # ─────────────────────────────────────────────────────────────────
 
-def render_masterhead():
+def render_masterhead(match_label=""):
     IST = pytz.timezone('Asia/Kolkata')
     now = datetime.now(IST).strftime("%d %b %Y  ·  %H:%M:%S IST")
+    label = match_label or "LIVE FEED ACTIVE"
     st.markdown(
         f'<div class="mh">'
-        f'<div><div class="mh-logo">GOD\'S<span>EYE</span> v3.3&nbsp;'
+        f'<div><div class="mh-logo">GOD\'S<span>EYE</span> v3.4&nbsp;'
         f'<span style="font-size:11px;color:var(--td);font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div style="font-family:var(--fm);font-size:10px;color:var(--td);margin-top:4px;">'
-        f'<span class="ld"></span>LIVE FEED ACTIVE — RCB vs SRH</div></div>'
+        f'<span class="ld"></span>{label}</div></div>'
         f'<div class="mh-meta"><div style="color:var(--tm);margin-bottom:2px">{now}</div>'
         f'<div>OPERATOR: <span style="color:var(--tp)">UDAY MADDILA</span></div></div>'
         f'</div>',
@@ -517,14 +767,12 @@ def render_press_box(sc):
     phase  = sc.get("phase", "middle")
     rcb_rr = sc.get("rcb",{}).get("rr","—")
     srh_rr = sc.get("srh",{}).get("rr","—")
-
     wp_b   = "b-red" if wp<30 else ("b-amber" if wp<50 else "b-cyan")
     wp_lbl = "[P0 CRITICAL]" if wp<25 else ("[P1 ELEVATED]" if wp<50 else "[P2 NOMINAL]")
     wp_c   = "var(--red)" if wp<40 else "var(--cyan)"
     rr_c   = "var(--red)" if rr>12 else ("var(--amber)" if rr>9 else "var(--green)")
     ph_map = {"powerplay":("POWERPLAY","ppp"),"middle":("MIDDLE","ppm"),"death":("DEATH","ppd")}
     ph_t, ph_c = ph_map.get(phase, ("MIDDLE","ppm"))
-
     c1,c2,c3,c4,c5 = st.columns(5)
     with c1:
         st.markdown(f'<div class="gc"><div class="badge {wp_b}">{wp_lbl}</div>'
@@ -540,7 +788,7 @@ def render_press_box(sc):
         st.markdown(f'<div class="gc"><div class="badge b-cyan">[INTELLIGENCE]</div>'
                     f'<div class="kl">MATCH TARGET</div>'
                     f'<div class="mlg">{target}</div>'
-                    f'<div class="ku">SRH total (1st innings)</div></div>', unsafe_allow_html=True)
+                    f'<div class="ku">1st innings total + 1</div></div>', unsafe_allow_html=True)
     with c4:
         st.markdown(f'<div class="gc"><div class="badge b-cyan">[MATCH PHASE]</div>'
                     f'<div class="kl">CURRENT PHASE</div>'
@@ -563,20 +811,15 @@ def render_scorebook(sc):
     bl   = sc.get("balls_left",0)
     rr   = sc.get("req_rr",0)
     rc   = "var(--red)" if rr>10 else "var(--amber)"
-
-    # PRESSURE SENSOR [v3.3 Fix]
     clutch_class = "clutch-alert" if rr > 10 else ""
-
     st.markdown(
         f'<div class="gc {clutch_class}">'
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:20px">'
-
         '<div style="flex:1;min-width:160px">'
         f'<div class="tl" style="color:#D22D3D">&#9670; {rcb.get("short","RCB")}</div>'
         f'<div class="mxl">{rcb.get("score","&mdash;")}/{rcb.get("wickets","&mdash;")}</div>'
         f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px">({rcb.get("overs","&mdash;")} OV) &nbsp;CRR: {rcb.get("rr","&mdash;")}</div>'
         '</div>'
-
         '<div style="flex:2;min-width:260px;padding:0 18px">'
         '<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);text-align:center;margin-bottom:10px">WIN PROBABILITY</div>'
         f'<div class="pr"><span style="color:#00D1FF">{rcb.get("short","RCB")}</span><span>{wp}%</span></div>'
@@ -586,14 +829,12 @@ def render_scorebook(sc):
         f'<div style="text-align:center;margin-top:14px;font-family:var(--fm);font-size:10px;color:var(--td)">{sc.get("venue","&mdash;")}</div>'
         f'<div style="text-align:center;margin-top:4px;font-family:var(--fm);font-size:11px;color:var(--tm)">{sc.get("status","LIVE")}</div>'
         '</div>'
-
         '<div style="flex:1;min-width:160px;text-align:right">'
         f'<div class="tl" style="color:#FF822A;text-align:right">&#9670; {srh.get("short","SRH")}</div>'
         f'<div class="mxl">{srh.get("score","&mdash;")}/{srh.get("wickets","&mdash;")}</div>'
         f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px">({srh.get("overs","&mdash;")} OV) &nbsp;CRR: {srh.get("rr","&mdash;")}</div>'
         '</div>'
         '</div>'
-
         '<div style="margin-top:20px;padding:11px 16px;background:rgba(255,62,62,0.06);'
         'border:1px solid rgba(255,62,62,0.2);border-radius:8px;font-family:var(--fm);'
         'font-size:12px;color:var(--tm);display:flex;justify-content:space-between;align-items:center">'
@@ -606,9 +847,9 @@ def render_scorebook(sc):
 
 def render_next_ball(sc):
     st.markdown('<div class="sh" style="margin-top:22px">&#9672; NEXT BALL INTELLIGENCE</div>', unsafe_allow_html=True)
-    probs   = next_ball_probs(sc)
-    req_rr  = float(sc.get("req_rr", 7))
-    wp      = sc.get("rcb_win_prob", 50)
+    probs    = next_ball_probs(sc)
+    req_rr   = float(sc.get("req_rr", 7))
+    wp       = sc.get("rcb_win_prob", 50)
     pressure = min(100, int(req_rr/18*100 + (50-wp)*0.6))
     pc = "var(--red)" if pressure>70 else ("var(--amber)" if pressure>45 else "var(--green)")
     pl = "EXTREME" if pressure>70 else ("HIGH" if pressure>45 else "MANAGEABLE")
@@ -616,7 +857,6 @@ def render_next_ball(sc):
     ml_desc = {"dot":"DOT BALL — defence expected","1":"SINGLE — rotation play",
                "2":"TWO RUNS — good running","4":"BOUNDARY incoming",
                "6":"SIX! — maximum likely","W":"WICKET ALERT"}
-
     cell_styles = {
         "dot":("#484F58","rgba(72,79,88,0.2)"),
         "1":  ("#7D8590","rgba(125,133,144,0.15)"),
@@ -632,19 +872,16 @@ def render_next_ball(sc):
                   f'<div style="font-size:18px;font-weight:700">{lbl}</div>'
                   f'<div style="font-size:10px;margin-top:4px;color:var(--tm)">{pct}%</div></div>')
     cells += '</div>'
-
     ca, cb = st.columns([3,2], gap="medium")
     with ca:
         st.markdown(
-            f'<div class="gc gc-cyan">'
-            f'<div class="kl">NEXT BALL — OUTCOME PROBABILITIES</div>'
+            f'<div class="gc gc-cyan"><div class="kl">NEXT BALL — OUTCOME PROBABILITIES</div>'
             + cells +
             f'<div style="margin-top:14px;font-family:var(--fm);font-size:11px;color:var(--tm)">'
-            f'&#9654; Most likely: <b style="color:var(--cyan)">{ml_desc[ml]}</b></div>'
-            f'</div>',
+            f'&#9654; Most likely: <b style="color:var(--cyan)">{ml_desc[ml]}</b></div></div>',
             unsafe_allow_html=True)
     with cb:
-        wkts_left = 10 - int(sc.get("rcb",{}).get("wickets","3"))
+        wkts_left = 10 - int(sc.get("rcb",{}).get("wickets","3") or 3)
         st.markdown(
             f'<div class="gc gc-red" style="height:100%">'
             f'<div class="kl">BATTING PRESSURE INDEX</div>'
@@ -654,8 +891,7 @@ def render_next_ball(sc):
             f'<div style="margin-top:18px;font-family:var(--fm);font-size:11px;color:var(--tm);line-height:1.7">'
             f'Req RR: <b style="color:var(--tp)">{sc.get("req_rr","&mdash;")}</b><br>'
             f'Balls left: <b style="color:var(--tp)">{sc.get("balls_left","&mdash;")}</b><br>'
-            f'Wickets left: <b style="color:var(--tp)">{wkts_left}</b></div>'
-            f'</div>',
+            f'Wickets left: <b style="color:var(--tp)">{wkts_left}</b></div></div>',
             unsafe_allow_html=True)
 
 
@@ -725,23 +961,22 @@ def render_bowler_intel(bowlers):
         html += '</div>'
         st.markdown(html, unsafe_allow_html=True)
     with cb:
-        fig = chart_bowler_radar(bowlers, "SRH")
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar":False})
+        srh_bowlers = [b for b in bowlers if b["team"]=="SRH"]
+        radar_team  = "SRH" if srh_bowlers else (bowlers[0]["team"] if bowlers else "SRH")
+        st.plotly_chart(chart_bowler_radar(bowlers, radar_team), width="stretch", config={"displayModeBar":False})
 
 
 def render_momentum_matrix(sc):
     st.markdown('<div class="sh" style="margin-top:22px">&#9672; MOMENTUM MATRIX</div>', unsafe_allow_html=True)
     ov, wp, rr, req = demo_momentum()
-    hist   = demo_history()
-    parts  = demo_partnerships()
-    bats   = demo_batters()
-
+    hist  = demo_history()
+    parts = demo_partnerships()
+    bats  = demo_batters()
     c1, c2 = st.columns([3,2], gap="medium")
     with c1:
         st.plotly_chart(chart_momentum(ov,wp,rr,req), width="stretch", config={"displayModeBar":False})
     with c2:
         st.plotly_chart(chart_wagon(), width="stretch", config={"displayModeBar":False})
-
     c3, c4 = st.columns([3,2], gap="medium")
     with c3:
         st.plotly_chart(chart_run_progression(hist), width="stretch", config={"displayModeBar":False})
@@ -767,11 +1002,9 @@ def render_intel_row(news):
             '</div></div>',
             unsafe_allow_html=True)
     with cb:
-        html = ('<div class="gc">'
-                '<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);margin-bottom:12px">PRESS BOX INTEL (CLICK HEADLINES)</div>')
+        html = ('<div class="gc"><div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);margin-bottom:12px">PRESS BOX INTEL (CLICK HEADLINES)</div>')
         if news:
             for item in news[:6]:
-                # CLICKABLE NEWS LINK INTEGRATION [v3.3]
                 html += f'<div class="ni"><div><a href="{item["link"]}" target="_blank" style="color:var(--tp);">{item["title"]}</a></div><div class="ni-s">{item.get("source","&mdash;")} &middot; {item.get("published","")[:22]}</div></div>'
         else:
             html += '<div class="ni" style="color:var(--td)">News feed unavailable.</div>'
@@ -785,13 +1018,11 @@ def render_neural_verdict(sc, batters, bowlers):
     phase = sc.get("phase", "death")
     bl    = sc.get("balls_left", 27)
     req   = sc.get("required", 46)
-
     arc_r = [b for b in batters if b["team"]=="RCB"]
     arc_s = [b for b in bowlers if b["team"]=="SRH"]
     top_bat = max(arc_r, key=lambda b:b["p50"]) if arc_r else None
     top_bwl = max(arc_s, key=lambda b:b["threat"]) if arc_s else None
     eco_k   = min(arc_s, key=lambda b:b["econ"])   if arc_s else None
-
     if wp>=60:
         sent,sc2="#00D1FF","STRONGLY FAVOURS RCB"
         body = (f"Neural pattern analysis indicates a high-confidence RCB chase. With {req} required off "
@@ -805,12 +1036,11 @@ def render_neural_verdict(sc, batters, bowlers):
         sent,sc2="#FF3E3E","STRONGLY FAVOURS SRH"
         body = (f"High-pressure scenario for RCB. Required rate {rr} over {bl} balls achieved only "
                 f"24% of the time at this venue in {phase} overs. SRH bowling depth adds significant variance.")
-
-    conf = min(99, int(abs(wp-50)*2+50))
-
+    conf    = min(99, int(abs(wp-50)*2+50))
+    IST     = pytz.timezone('Asia/Kolkata')
+    now_str = datetime.now(IST).strftime("%H:%M:%S IST")
     html = (
-        f'<div class="vd">'
-        f'<div class="vd-h">&#9672; 3RD UMPIRE AI &mdash; NEURAL PATTERN ANALYSIS &nbsp;&middot;&nbsp;'
+        f'<div class="vd"><div class="vd-h">&#9672; 3RD UMPIRE AI &mdash; NEURAL PATTERN ANALYSIS &nbsp;&middot;&nbsp;'
         f'<span style="color:var(--td)">CONFIDENCE: <b style="color:{sc2}">{conf}%</b></span></div>'
         f'<div style="font-family:var(--fm);font-size:12px;font-weight:700;color:{sc2};letter-spacing:2px;margin-bottom:10px">VERDICT &mdash; {sent}</div>'
         f'<div style="font-size:14px;color:var(--tp);line-height:1.7">{body}</div>'
@@ -838,13 +1068,10 @@ def render_neural_verdict(sc, batters, bowlers):
                  f'Economy: <b style="color:var(--green)">{eco_k["econ"]}</b> &middot; '
                  f'Dot%: {eco_k["dot"]}% &middot; Giving fewest runs/over. '
                  f'RCB must target the other end to keep the chase viable.</div>')
-    html += (
-        f'<div style="margin-top:14px;font-family:var(--fm);font-size:10px;color:var(--td);'
-        f'border-top:1px solid var(--border);padding-top:10px">'
-        f'MODEL: GOD\'S EYE v3.3 &middot; RapidAPI / Google News RSS &middot; '
-        f'SYNC: {datetime.now().strftime("%H:%M:%S IST")} &middot; OPERATOR: UDAY MADDILA'
-        f'</div></div>'
-    )
+    html += (f'<div style="margin-top:14px;font-family:var(--fm);font-size:10px;color:var(--td);'
+             f'border-top:1px solid var(--border);padding-top:10px">'
+             f'MODEL: GOD\'S EYE v3.4 &middot; RapidAPI / Google News RSS &middot; '
+             f'SYNC: {now_str} &middot; OPERATOR: UDAY MADDILA</div></div>')
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -852,42 +1079,48 @@ def render_neural_verdict(sc, batters, bowlers):
 # 8. SIDEBAR
 # ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;color:#7D8590;margin-bottom:12px">&#9881; SYSTEM CONTROLS</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;'
+        'color:#7D8590;margin-bottom:12px">&#9881; SYSTEM CONTROLS</div>',
+        unsafe_allow_html=True,
+    )
     auto_refresh = st.toggle("Auto-Refresh (30s)", value=True)
     show_demo    = st.toggle("Force Demo Data",    value=False)
+    debug_mode   = st.toggle("Debug API Response", value=False)
     st.divider()
-    st.markdown('<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:#484F58">GOD\'S EYE v3.3<br>IPL Match Center<br>&#169; Uday Maddila</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
+        'color:#484F58">GOD\'S EYE v3.4<br>IPL Match Center<br>'
+        '&#169; Uday Maddila</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────
 # 9. MAIN RENDER LOOP
 # ─────────────────────────────────────────────────────────────────
-render_masterhead()
+sc      = None
+batters = []
+bowlers = []
 
-with st.spinner("Synchronizing with Live Match Feed..."):
-    sc = None
-    if not show_demo:
-        raw = fetch_live_matches()
-        if raw:
-            try:
-                for match in raw.get("data",[]):
-                    t = match.get("name","").upper()
-                    if ("RCB" in t or "ROYAL CHALLENGERS" in t) and \
-                       ("SRH" in t or "SUNRISERS" in t):
-                        sc_raw = fetch_match_score(match.get("id",""))
-                        if sc_raw and sc_raw.get("status") != "Upcoming":
-                            sc = sc_raw
-                            break
-            except Exception:
-                sc = None
-    if sc is None:
-        st.info("📡 Awaiting Live Broadcast: RCB vs SRH starts tonight at 7:30 PM IST. Displaying pre-match metrics.")
-        sc = demo_sc()
+if not show_demo:
+    with st.spinner("Synchronizing with Live Match Feed..."):
+        sc, batters, bowlers = resolve_live_match("RCB", "SRH", debug=debug_mode)
+        if sc is None:
+            sc, batters, bowlers = resolve_live_match("IPL", "", debug=False)
 
-    news    = fetch_news()
+if sc is None:
+    st.info("📡 No live IPL match found right now. Displaying pre-match demo metrics.")
+    sc = demo_sc()
+
+if not batters:
     batters = demo_batters()
+if not bowlers:
     bowlers = demo_bowlers()
 
+news = fetch_news()
+
+render_masterhead(sc.get("match", "LIVE FEED ACTIVE"))
 render_press_box(sc)
 render_scorebook(sc)
 render_next_ball(sc)
