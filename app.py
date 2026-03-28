@@ -17,7 +17,7 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
 RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"
 API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
-REFRESH_SECS  = 10
+REFRESH_SECS  = 1
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -227,7 +227,7 @@ def _fetch_list():
     except: pass
     return None
 
-@st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def _fetch_scard(mid):
     try:
         r = requests.get(f"https://{RAPIDAPI_HOST}/mcenter/v1/{mid}/hscard",
