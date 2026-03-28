@@ -32,7 +32,7 @@ st.set_page_config(
 # 1. CONSTANTS & API KEYS
 # ─────────────────────────────────────────────────────────────────
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
-RAPIDAPI_HOST = "cricket-api-free-data.p.rapidapi.com"
+RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"          # ← correct host
 API_HEADERS   = {
     "x-rapidapi-key":  RAPIDAPI_KEY,
     "x-rapidapi-host": RAPIDAPI_HOST,
@@ -432,7 +432,7 @@ def _transform_scorecard(raw: dict):
 def _fetch_match_list():
     try:
         r = requests.get(
-            f"https://{RAPIDAPI_HOST}/cricket-match-list",
+            f"https://{RAPIDAPI_HOST}/matches/v1/live",
             headers=API_HEADERS, timeout=8,
         )
         if r.status_code == 200:
@@ -445,10 +445,8 @@ def _fetch_match_list():
 def _fetch_scorecard(match_id):
     try:
         r = requests.get(
-            f"https://{RAPIDAPI_HOST}/cricket-match-scorecard",
-            headers=API_HEADERS,
-            params={"id": match_id},
-            timeout=8,
+            f"https://{RAPIDAPI_HOST}/mcenter/v1/{match_id}/scard",
+            headers=API_HEADERS, timeout=8,
         )
         if r.status_code == 200:
             return r.json()
@@ -473,46 +471,204 @@ def fetch_news():
     except Exception:
         return []
 
-def resolve_live_match(team_a="RCB", team_b="SRH", debug=False):
+
+def _parse_cricbuzz_live(raw_list: dict) -> list:
+    """
+    Flatten Cricbuzz live match list into a simple list of dicts with keys:
+      matchId, team1, team2, seriesName, status, score1, score2
+    """
+    results = []
+    try:
+        for type_match in raw_list.get("typeMatches", []):
+            for series_match in type_match.get("seriesMatches", []):
+                wrapper = series_match.get("seriesAdWrapper", {})
+                series_name = wrapper.get("seriesName", "")
+                for match in wrapper.get("matches", []):
+                    mi     = match.get("matchInfo", {})
+                    ms     = match.get("matchScore", {})
+                    mid    = str(mi.get("matchId", ""))
+                    team1  = mi.get("team1", {}).get("teamName", "")
+                    team2  = mi.get("team2", {}).get("teamName", "")
+                    status = mi.get("status", "")
+                    # scores may not exist for upcoming
+                    t1s = ms.get("team1Score", {})
+                    t2s = ms.get("team2Score", {})
+                    results.append({
+                        "matchId":    mid,
+                        "team1":      team1,
+                        "team2":      team2,
+                        "seriesName": series_name,
+                        "status":     status,
+                        "t1_score":   t1s,
+                        "t2_score":   t2s,
+                    })
+    except Exception:
+        pass
+    return results
+
+
+def _parse_cricbuzz_scorecard(raw_sc: dict, match_meta: dict) -> tuple:
+    """
+    Parse Cricbuzz /mcenter/v1/{id}/scard response into (sc_dict, batters, bowlers).
+    Returns (None, [], []) on failure.
+    """
+    try:
+        data      = raw_sc.get("scoreCard", [])
+        match_hdr = raw_sc.get("matchHeader", {})
+
+        if not data:
+            return None, [], []
+
+        team1_name = match_hdr.get("team1", {}).get("name", match_meta.get("team1", ""))
+        team2_name = match_hdr.get("team2", {}).get("name", match_meta.get("team2", ""))
+        venue      = match_hdr.get("matchInfo", {}).get("ground", {}).get("longName", "")
+        status     = match_hdr.get("status", "LIVE")
+        match_name = f"{team1_name} vs {team2_name}"
+
+        # innings 0=first, 1=second (if exists)
+        inn1 = data[0] if len(data) > 0 else None
+        inn2 = data[1] if len(data) > 1 else None
+
+        def parse_inn(inn, team_name):
+            if not inn:
+                return None
+            score = inn.get("scoreDetails", {})
+            r = _int(score.get("runs", 0))
+            w = _int(score.get("wickets", 0))
+            o = _float(score.get("overs", 0))
+            rr = round(r / o, 2) if o > 0 else 0.0
+            return {
+                "name":    team_name,
+                "short":   _team_short(team_name),
+                "score":   str(r),
+                "wickets": str(w),
+                "overs":   str(o),
+                "rr":      str(rr),
+                "_r": r, "_w": w, "_o": o,
+            }
+
+        t1_inn = parse_inn(inn1, team1_name)
+        t2_inn = parse_inn(inn2, team2_name)
+
+        if t1_inn is None:
+            return None, [], []
+
+        second_innings = t2_inn is not None
+        bat_inn   = t2_inn if second_innings else t1_inn
+        field_inn = t1_inn if second_innings else {
+            "name": team2_name, "short": _team_short(team2_name),
+            "score": "—", "wickets": "—", "overs": "0.0", "rr": "0.0",
+            "_r": 0, "_w": 0, "_o": 0.0,
+        }
+
+        target      = t1_inn["_r"] + 1 if second_innings else 0
+        runs_needed = max(0, target - bat_inn["_r"]) if target > 0 else 0
+        balls_used  = int(bat_inn["_o"]) * 6 + round((bat_inn["_o"] % 1) * 10)
+        balls_left  = max(0, 120 - balls_used)
+        req_rr      = round((runs_needed * 6) / balls_left, 2) if (balls_left > 0 and runs_needed > 0) else 0.0
+        phase       = "powerplay" if bat_inn["_o"] <= 6 else ("death" if bat_inn["_o"] >= 15 else "middle")
+        bat_wp, fld_wp = _win_prob(bat_inn["_r"], bat_inn["_w"], bat_inn["_o"], target) if target > 0 else (50, 50)
+
+        rcb_bat = "RCB" in bat_inn["short"]
+        sc_dict = {
+            "match":        match_name,
+            "venue":        venue,
+            "status":       status,
+            "rcb":          bat_inn   if rcb_bat else field_inn,
+            "srh":          field_inn if rcb_bat else bat_inn,
+            "target":       target,
+            "required":     runs_needed,
+            "req_rr":       req_rr,
+            "balls_left":   balls_left,
+            "phase":        phase,
+            "rcb_win_prob": bat_wp if rcb_bat else fld_wp,
+            "srh_win_prob": fld_wp if rcb_bat else bat_wp,
+        }
+
+        # Extract batters from the active innings
+        batters = []
+        active_inn = inn2 if second_innings else inn1
+        bat_team   = bat_inn["short"]
+        bats_data  = active_inn.get("batTeamDetails", {}).get("batsmenData", {})
+        for key, b in bats_data.items():
+            name  = b.get("batName", "")
+            if not name:
+                continue
+            runs  = _int(b.get("runs", 0))
+            balls = max(1, _int(b.get("balls", 1)))
+            fours = _int(b.get("fours", 0))
+            sixes = _int(b.get("sixes", 0))
+            sr    = round(_float(b.get("strikeRate", 0)) or runs / balls * 100, 1)
+            form  = min(100, int(sr * 0.5 + runs * 0.3 + fours * 2 + sixes * 3))
+            p50   = min(99, max(5, 99 if runs >= 50 else int(runs / 50 * 100)))
+            p30   = min(99, max(5, 99 if runs >= 30 else int(runs / 30 * 100)))
+            batters.append({
+                "name": name, "team": bat_team,
+                "runs": runs, "balls": balls,
+                "sr": sr, "4s": fours, "6s": sixes,
+                "form": form, "p50": p50, "p30": p30,
+            })
+
+        # Extract bowlers from the active innings
+        bowlers = []
+        bowl_team  = field_inn["short"]
+        bowls_data = active_inn.get("bowlTeamDetails", {}).get("bowlersData", {})
+        for key, b in bowls_data.items():
+            name  = b.get("bowlName", "")
+            if not name:
+                continue
+            overs  = _float(b.get("overs",   0))
+            runs   = _int(b.get("runs",      0))
+            wkts   = _int(b.get("wickets",   0))
+            maiden = _int(b.get("maidens",   0))
+            econ   = round(_float(b.get("economy", 0)) or (runs / overs if overs > 0 else 0), 2)
+            dot    = min(99, int(maiden * 12 + max(0, 8 - econ) * 4))
+            avg    = round(runs / wkts, 1) if wkts > 0 else 0.0
+            threat = min(99, int(wkts * 25 + max(0, 10 - econ) * 4 + dot * 0.3))
+            bowlers.append({
+                "name": name, "team": bowl_team,
+                "overs": overs, "runs": runs, "wkts": wkts,
+                "econ": econ, "dot": dot, "threat": threat, "avg": avg,
+            })
+
+        return sc_dict, (batters if len(batters) >= 2 else []), (bowlers if len(bowlers) >= 2 else [])
+
+    except Exception:
+        return None, [], []
+
+
+def resolve_live_match(debug=False):
     raw_list = _fetch_match_list()
     if debug and raw_list:
-        with st.expander("🔍 RAW — Match List", expanded=False):
+        with st.expander("🔍 RAW — Match List (Cricbuzz)", expanded=False):
             st.json(raw_list)
     if not raw_list:
         return None, [], []
-    matches = raw_list.get("data", raw_list)
-    if isinstance(matches, dict):
-        matches = [matches]
-    for match in (matches or []):
-        name_upper = (
-            (match.get("name", "") or "") +
-            (match.get("series", "") or "") +
-            (match.get("matchDesc", "") or "")
-        ).upper()
-        is_ipl = "IPL" in name_upper or "INDIAN PREMIER" in name_upper
-        has_a  = (team_a.upper() in name_upper) if team_a else True
-        has_b  = (team_b.upper() in name_upper) if team_b else True
-        if not (is_ipl and (has_a or has_b)):
+
+    matches = _parse_cricbuzz_live(raw_list)
+
+    for match in matches:
+        series = match["seriesName"].upper()
+        t1     = match["team1"].upper()
+        t2     = match["team2"].upper()
+        status = match["status"].lower()
+
+        if "IPL" not in series and "INDIAN PREMIER" not in series:
             continue
-        mid = match.get("id", match.get("matchId", ""))
-        if not mid:
+        if "upcom" in status or "yet to" in status or "preview" in status or not match["matchId"]:
             continue
-        raw_sc = _fetch_scorecard(str(mid))
+
+        raw_sc = _fetch_scorecard(match["matchId"])
         if debug and raw_sc:
-            with st.expander(f"🔍 RAW — Scorecard ({mid})", expanded=False):
+            with st.expander(f"🔍 RAW — Scorecard ({match['matchId']})", expanded=False):
                 st.json(raw_sc)
         if not raw_sc:
             continue
-        inner  = raw_sc.get("data", raw_sc)
-        if isinstance(inner, list):
-            inner = inner[0] if inner else {}
-        status = str(inner.get("status", "")).lower()
-        if "upcom" in status or "yet to" in status or "preview" in status:
-            continue
-        sc      = _transform_scorecard(raw_sc)
-        batters = _extract_batters_from_raw(raw_sc)
-        bowlers = _extract_bowlers_from_raw(raw_sc)
-        return sc, batters, bowlers
+
+        sc, batters, bowlers = _parse_cricbuzz_scorecard(raw_sc, match)
+        if sc:
+            return sc, batters, bowlers
+
     return None, [], []
 
 
