@@ -15,8 +15,11 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
-RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"
+# PRIMARY: unofficial-cricbuzz (subscribe free at rapidapi.com/naeimsalib/api/unofficial-cricbuzz)
+RAPIDAPI_HOST = "unofficial-cricbuzz.p.rapidapi.com"
 API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
+# BACKUP host (switch if quota hit): "cricbuzz-cricket.p.rapidapi.com"
+BACKUP_HOST   = "cricbuzz-cricket.p.rapidapi.com"
 REFRESH_SECS  = 15
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -220,14 +223,16 @@ def next_ball(sc):
 
 # ── DATA LAYER ────────────────────────────────────────────────────────────────
 def _fetch_list():
-    """Returns (data, status_code). status=429/403 means quota hit."""
-    try:
-        r = requests.get(f"https://{RAPIDAPI_HOST}/matches/v1/live",
-                         headers=API_HEADERS, timeout=8)
-        if r.status_code == 200: return r.json(), 200
-        return None, r.status_code
-    except: pass
-    return None, 0
+    """Returns (data, status_code). Tries primary host, falls back to backup on 429/403."""
+    for host in [RAPIDAPI_HOST, BACKUP_HOST]:
+        try:
+            h = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": host}
+            r = requests.get(f"https://{host}/matches/v1/live", headers=h, timeout=8)
+            if r.status_code == 200: return r.json(), 200
+            if r.status_code not in (429, 403): return None, r.status_code
+            # 429/403 on this host — try next
+        except: pass
+    return None, 429  # both hosts exhausted
 
 def _fetch_list_data():
     """Compatibility wrapper — returns just data."""
@@ -236,11 +241,12 @@ def _fetch_list_data():
 
 @st.cache_data(ttl=10, show_spinner=False)
 def _fetch_scard(mid):
-    try:
-        r = requests.get(f"https://{RAPIDAPI_HOST}/mcenter/v1/{mid}/hscard",
-                         headers=API_HEADERS, timeout=8)
-        if r.status_code == 200: return r.json()
-    except: pass
+    for host in [RAPIDAPI_HOST, BACKUP_HOST]:
+        try:
+            h = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": host}
+            r = requests.get(f"https://{host}/mcenter/v1/{mid}/hscard", headers=h, timeout=8)
+            if r.status_code == 200: return r.json()
+        except: pass
     return None
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -254,25 +260,57 @@ def _fetch_news():
     except: return []
 
 
-def _parse_list(raw):
+def _parse_list(raw, source="cricbuzz"):
+    """Parse match list from either cricketdata.org or Cricbuzz."""
     out = []
-    for tm in raw.get("typeMatches",[]):
-        for sm in tm.get("seriesMatches",[]):
-            wr = sm.get("seriesAdWrapper",{})
-            sn = wr.get("seriesName","")
-            for m in wr.get("matches",[]):
-                mi = m.get("matchInfo",{}); ms = m.get("matchScore",{})
-                vi = mi.get("venueInfo",{})
+    try:
+        if source == "cricdata":
+            # cricketdata.org /currentMatches format:
+            # { "data": [ { "id", "name", "status", "venue", "teams": [...],
+            #               "score": [{"inning","r","w","o"},...] } ] }
+            for m in raw.get("data", []):
+                name  = m.get("name", "")
+                teams = m.get("teams", [])
+                t1    = teams[0] if len(teams) > 0 else "Team1"
+                t2    = teams[1] if len(teams) > 1 else "Team2"
+                score = m.get("score", [])
+                s1    = score[0] if len(score) > 0 else {}
+                s2    = score[1] if len(score) > 1 else {}
+                series= m.get("series", m.get("matchType",""))
                 out.append({
-                    "matchId":    str(mi.get("matchId","")),
-                    "team1":      mi.get("team1",{}).get("teamName",""),
-                    "team2":      mi.get("team2",{}).get("teamName",""),
-                    "seriesName": sn,
-                    "status":     mi.get("status",""),
-                    "venue":      f"{vi.get('ground','')}, {vi.get('city','')}".strip(", "),
-                    "t1s":        ms.get("team1Score",{}),
-                    "t2s":        ms.get("team2Score",{}),
+                    "matchId":    str(m.get("id","")),
+                    "team1":      t1,
+                    "team2":      t2,
+                    "seriesName": series,
+                    "status":     m.get("status",""),
+                    "venue":      m.get("venue",""),
+                    "t1s": {"inngs1": {"runs": _int(s1.get("r",0)),
+                                       "wickets": _int(s1.get("w",0)),
+                                       "overs": _float(s1.get("o",0))}},
+                    "t2s": {"inngs1": {"runs": _int(s2.get("r",0)),
+                                       "wickets": _int(s2.get("w",0)),
+                                       "overs": _float(s2.get("o",0))}} if s2 else {},
                 })
+        else:
+            # Cricbuzz format (original)
+            for tm in raw.get("typeMatches",[]):
+                for sm in tm.get("seriesMatches",[]):
+                    wr = sm.get("seriesAdWrapper",{})
+                    sn = wr.get("seriesName","")
+                    for m in wr.get("matches",[]):
+                        mi = m.get("matchInfo",{}); ms = m.get("matchScore",{})
+                        vi = mi.get("venueInfo",{})
+                        out.append({
+                            "matchId":    str(mi.get("matchId","")),
+                            "team1":      mi.get("team1",{}).get("teamName",""),
+                            "team2":      mi.get("team2",{}).get("teamName",""),
+                            "seriesName": sn,
+                            "status":     mi.get("status",""),
+                            "venue":      f"{vi.get('ground','')}, {vi.get('city','')}".strip(", "),
+                            "t1s":        ms.get("team1Score",{}),
+                            "t2s":        ms.get("team2Score",{}),
+                        })
+    except: pass
     return out
 
 
@@ -323,65 +361,59 @@ def _build_sc(m):
 
 def _parse_scard(raw, sc):
     """
-    Cricbuzz hscard actual structure:
-      raw['scorecard'] = list of innings dicts
-      innings: { 'batsman': [...], 'bowler': [...], 'batteamsname': 'SRH',
-                 'score': 71, 'wickets': 3, 'overs': 8.1, 'runrate': 8.69,
-                 'extras': {...}, 'partnership': {...} }
-      batter fields: name, runs, balls, fours, sixes, strkrate, outdec
-      bowler fields: name, overs, runs, wickets, maidens, economy
+    cricketdata.org match_scorecard structure:
+      raw['data']['scorecard'] = list of innings
+      innings: { batting:[{batsman,r,b,4s,6s,sr,dismissal}], bowling:[{bowler,o,m,r,w,eco}] }
     """
     batters, bowlers, extras, partnership = [], [], {}, {}
     try:
-        cards = raw.get("scorecard", raw.get("scoreCard", []))
+        data = raw.get("data", {})
+        if not data: return [], [], {}, {}
+
+        cards = data.get("scorecard", [])
         if not cards: return [], [], {}, {}
 
         card = cards[-1]  # latest innings
-        bat_short = card.get("batteamsname", sc["bat"]["short"])
-        # fielding team = the other one
-        fld_short = sc["field"]["short"] if bat_short == sc["bat"]["short"] else sc["bat"]["short"]
+        bat_short = sc["bat"]["short"]
+        fld_short = sc["field"]["short"]
 
-        extras     = card.get("extras", {})
-        partnership= card.get("partnership", {})
-        if isinstance(partnership, dict) and "partnership" in partnership:
-            partnership = partnership["partnership"]
-        if isinstance(partnership, list) and partnership:
-            partnership = partnership[-1]  # current partnership
+        extras = data.get("extras", {})
+        if isinstance(extras, list) and extras:
+            extras = extras[-1]
 
         # ── Batters ──────────────────────────────────────────────────────
-        for b in card.get("batsman", []):
-            name = b.get("name") or b.get("nickname") or ""
+        for b in card.get("batting", []):
+            name = b.get("batsman","") or b.get("name","")
             if not name: continue
-            r   = _int(b.get("runs", 0))
-            bl  = max(1, _int(b.get("balls", 1)))
-            f4  = _int(b.get("fours", 0))
-            f6  = _int(b.get("sixes", 0))
-            sr  = round(_float(b.get("strkrate", 0)) or r/bl*100, 1)
-            out = b.get("outdec", "") or ""
-            # Show only: currently batting OR has actually faced balls
-            if bl > 0 or "batting" in out.lower():
+            r   = _int(b.get("r", b.get("runs", 0)))
+            bl  = max(1, _int(b.get("b", b.get("balls", 1))))
+            f4  = _int(b.get("4s", b.get("fours", 0)))
+            f6  = _int(b.get("6s", b.get("sixes", 0)))
+            sr  = round(_float(b.get("sr", b.get("strikeRate",0))) or r/bl*100, 1)
+            out = b.get("dismissal", b.get("outdec","")) or ""
+            if bl > 0 or "not out" in out.lower() or out == "":
                 batters.append({
                     "name": name, "team": bat_short,
                     "runs": r, "balls": bl, "sr": sr,
                     "4s": f4, "6s": f6, "status": out,
-                    "batting_now": "batting" in out.lower() or out == ""
+                    "batting_now": "not out" in out.lower() or out.strip() == ""
                 })
 
         # ── Bowlers ──────────────────────────────────────────────────────
-        for b in card.get("bowler", []):
-            name = b.get("name") or b.get("nickname") or ""
+        for b in card.get("bowling", []):
+            name = b.get("bowler","") or b.get("name","")
             if not name: continue
-            o  = _float(b.get("overs", 0))
-            r  = _int(b.get("runs", 0))
-            w  = _int(b.get("wickets", 0))
-            m  = _int(b.get("maidens", 0))
-            ec = round(_float(b.get("economy", 0)) or (r/o if o>0 else 0), 2)
-            if o > 0 or w > 0:  # only bowlers who have bowled
+            o  = _float(b.get("o", b.get("overs", 0)))
+            r  = _int(b.get("r", b.get("runs", 0)))
+            w  = _int(b.get("w", b.get("wickets", 0)))
+            m  = _int(b.get("m", b.get("maidens", 0)))
+            ec = round(_float(b.get("eco", b.get("economy",0))) or (r/o if o>0 else 0), 2)
+            if o > 0 or w > 0:
                 bowlers.append({
                     "name": name, "team": fld_short,
                     "overs": o, "runs": r, "wkts": w,
                     "maidens": m, "econ": ec,
-                    "bowling_now": b.get("inmatchchange","") == ""
+                    "bowling_now": False
                 })
 
     except Exception:
@@ -390,14 +422,14 @@ def _parse_scard(raw, sc):
 
 
 def resolve_live(debug=False):
-    raw, status = _fetch_list()
+    raw, status, source = _fetch_list()
     if debug and raw:
-        with st.expander("🔍 RAW — Match List", expanded=True): st.json(raw)
+        with st.expander(f"🔍 RAW — Match List ({source})", expanded=True): st.json(raw)
     if status in (429, 403):
-        return None, [], [], {}, {}, status   # quota hit — caller handles
+        return None, [], [], {}, {}, status
     if not raw: return None, [], [], {}, {}, status
 
-    for m in _parse_list(raw):
+    for m in _parse_list(raw, source):
         sn  = m["seriesName"].upper()
         st_ = m["status"].lower()
         if "IPL" not in sn and "INDIAN PREMIER" not in sn: continue
@@ -407,7 +439,8 @@ def resolve_live(debug=False):
         if not sc: continue
 
         bat, bowl, extras, partner = [], [], {}, {}
-        rscard = _fetch_scard(m["matchId"])
+        rscard_result = _fetch_scard(m["matchId"])
+        rscard = rscard_result[0] if rscard_result and isinstance(rscard_result, tuple) else rscard_result
         if debug and rscard:
             with st.expander(f"🔍 RAW — Scorecard ({m['matchId']})", expanded=False):
                 st.json(rscard)
@@ -837,8 +870,8 @@ with ce:
         st.cache_data.clear(); st.rerun()
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-API_INTERVAL = 30   # seconds between API calls (~2880/day — fine for free tier)
-REFRESH_SECS = 15   # UI rerun interval
+API_INTERVAL = 120  # 2 min intervals = 720 calls/day, well within 100/day free quota
+
 
 _now = time.time()
 
