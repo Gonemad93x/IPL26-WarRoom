@@ -1,236 +1,192 @@
 """
-╔══════════════════════════════════════════════════════════════════╗
-║   GOD'S EYE v3.4 — IPL ELITE MATCH CENTER (FULL UNIFIED)         ║
-║   Operator: Uday Maddila                                         ║
-║   Patch v3.4: Live data transformer + fallback chain             ║
-╚══════════════════════════════════════════════════════════════════╝
+GOD'S EYE v3.5 — IPL LIVE MATCH CENTER
+Operator : Uday Maddila
+Rebuild  : Light theme · Cricbuzz-style layout · Real-time only
 """
 
 import streamlit as st
 import requests
 import feedparser
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import pandas as pd
-import numpy as np
 import time
-import random
 from datetime import datetime
 import pytz
 
 # ─────────────────────────────────────────────────────────────────
-# 0. PAGE CONFIG  (must be FIRST Streamlit call)
+# 0. PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="GOD'S EYE | IPL Match Center",
+    page_title="GOD'S EYE | IPL 2026",
     page_icon="🏏",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ─────────────────────────────────────────────────────────────────
-# 1. CONSTANTS & API KEYS
+# 1. CONSTANTS
 # ─────────────────────────────────────────────────────────────────
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
-RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"          # ← correct host
-API_HEADERS   = {
-    "x-rapidapi-key":  RAPIDAPI_KEY,
-    "x-rapidapi-host": RAPIDAPI_HOST,
-}
-REFRESH_SECS = 30
+RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"
+API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
+REFRESH_SECS  = 30
 
 # ─────────────────────────────────────────────────────────────────
-# 2. GLOBAL CSS
+# 2. GLOBAL CSS — clean light theme
 # ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
-
-:root {
-    --bg-base:   #0B0E14;
-    --bg-card:   rgba(255,255,255,0.035);
-    --bg-hover:  rgba(255,255,255,0.055);
-    --border:    rgba(255,255,255,0.08);
-    --bc:        rgba(0,209,255,0.35);
-    --tp:        #E6EDF3;
-    --tm:        #7D8590;
-    --td:        #484F58;
-    --red:       #FF3E3E;
-    --cyan:      #00D1FF;
-    --green:     #3DFF7A;
-    --amber:     #FFB547;
-    --purple:    #BF7FFF;
-    --fp:        'Inter', sans-serif;
-    --fm:        'JetBrains Mono', monospace;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 html, body,
 [data-testid="stAppViewContainer"],
 [data-testid="stApp"], .main {
-    background: var(--bg-base) !important;
-    color: var(--tp) !important;
-    font-family: var(--fp) !important;
+    background: #F5F7FA !important;
+    color: #1a1a2e !important;
+    font-family: 'Inter', sans-serif !important;
 }
-[data-testid="stHeader"],
-[data-testid="stToolbar"],
-footer { display:none !important; }
-/* sidebar visible */
-div.block-container { padding:1.6rem 2.4rem 3rem !important; max-width:1440px; }
-.stMarkdown { padding:0 !important; }
-[data-testid="stHorizontalBlock"] > div { padding:0 5px; }
-[data-testid="stHorizontalBlock"] > div:first-child { padding-left:0; }
-[data-testid="stHorizontalBlock"] > div:last-child  { padding-right:0; }
+[data-testid="stHeader"], [data-testid="stToolbar"], footer { display:none !important; }
+section[data-testid="stSidebar"] { display:none !important; }
+div.block-container { padding: 1rem 2rem 2rem !important; max-width: 1400px; }
+[data-testid="stHorizontalBlock"] > div { padding: 0 6px; }
+[data-testid="stHorizontalBlock"] > div:first-child { padding-left: 0; }
+[data-testid="stHorizontalBlock"] > div:last-child  { padding-right: 0; }
+.stMarkdown { padding: 0 !important; }
 
-.gc {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+/* Cards */
+.card {
+    background: #ffffff;
     border-radius: 10px;
-    padding: 18px 22px;
+    padding: 16px 20px;
+    border: 1px solid #E2E8F0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     height: 100%;
-    transition: border-color .2s;
 }
-.gc:hover  { border-color: var(--bc); }
-.gc-cyan   { border-left: 3px solid var(--cyan);   }
-.gc-red    { border-left: 3px solid var(--red);    }
-.gc-green  { border-left: 3px solid var(--green);  }
-.gc-amber  { border-left: 3px solid var(--amber);  }
-.gc-purple { border-left: 3px solid var(--purple); }
+.card-blue  { border-top: 3px solid #2563EB; }
+.card-red   { border-top: 3px solid #DC2626; }
+.card-green { border-top: 3px solid #16A34A; }
+.card-amber { border-top: 3px solid #D97706; }
+.card-purple{ border-top: 3px solid #7C3AED; }
 
-.ni a { text-decoration: none; transition: color 0.2s; }
-.ni a:hover { color: var(--cyan) !important; text-decoration: underline !important; }
-
-.clutch-alert {
-    animation: pulse-red 2s infinite;
-    border-color: var(--red) !important;
-    background: rgba(255,62,62,0.08) !important;
-}
-@keyframes pulse-red {
-    0% { box-shadow: 0 0 0 0 rgba(255,62,62,0.4); }
-    70% { box-shadow: 0 0 0 10px rgba(255,62,62,0); }
-    100% { box-shadow: 0 0 0 0 rgba(255,62,62,0); }
+/* Section headers */
+.sec-hdr {
+    font-size: 11px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; color: #64748B;
+    border-bottom: 2px solid #E2E8F0;
+    padding-bottom: 8px; margin-bottom: 14px; margin-top: 20px;
 }
 
+/* Score display */
+.score-big   { font-size: 42px; font-weight: 700; color: #1E293B; line-height: 1; }
+.score-sub   { font-size: 13px; color: #64748B; margin-top: 4px; }
+.team-label  { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #64748B; margin-bottom: 6px; }
+.live-dot    { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #DC2626; margin-right: 6px; animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* Stat value */
+.stat-val  { font-size: 22px; font-weight: 700; color: #1E293B; line-height: 1.1; }
+.stat-lbl  { font-size: 11px; color: #94A3B8; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 4px; }
+.stat-sub  { font-size: 12px; color: #64748B; margin-top: 3px; }
+
+/* Progress bar */
+.pbar-wrap { height: 8px; background: #E2E8F0; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+.pbar-fill { height: 100%; border-radius: 4px; }
+
+/* Phase badge */
 .badge {
-    font-family: var(--fm);
-    font-size: 9px; font-weight: 700;
-    letter-spacing: 1.5px;
-    border-radius: 4px;
-    padding: 2px 8px;
-    display: inline-block;
-    margin-bottom: 8px;
+    display: inline-block; font-size: 10px; font-weight: 700;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    padding: 3px 10px; border-radius: 20px;
 }
-.b-red    { color:var(--red);    background:rgba(255,62,62,.12);   border:1px solid rgba(255,62,62,.3);   }
-.b-amber  { color:var(--amber);  background:rgba(255,181,71,.10);  border:1px solid rgba(255,181,71,.3);  }
-.b-cyan   { color:var(--cyan);   background:rgba(0,209,255,.10);   border:1px solid rgba(0,209,255,.25);  }
-.b-green  { color:var(--green);  background:rgba(61,255,122,.10);  border:1px solid rgba(61,255,122,.25); }
-.b-purple { color:var(--purple); background:rgba(191,127,255,.10); border:1px solid rgba(191,127,255,.3); }
+.badge-pp  { background: #DBEAFE; color: #1D4ED8; }
+.badge-mid { background: #FEF3C7; color: #92400E; }
+.badge-dth { background: #FEE2E2; color: #991B1B; }
+.badge-live{ background: #DCFCE7; color: #166534; }
 
-.sh {
-    font-family: var(--fm);
-    font-size: 10px; letter-spacing: 3px;
-    color: var(--td);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 8px; margin-bottom: 14px;
+/* Table rows */
+.trow {
+    display: grid; align-items: center;
+    padding: 9px 0; border-bottom: 1px solid #F1F5F9;
+    font-size: 13px;
 }
-.mlg { font-family:var(--fm); font-size:26px; font-weight:700; color:var(--tp); line-height:1; }
-.mxl { font-family:var(--fm); font-size:48px; font-weight:700; color:var(--tp); line-height:1; letter-spacing:-1px; }
-.kl  { font-family:var(--fm); font-size:10px; letter-spacing:1.8px; color:var(--td); text-transform:uppercase; margin-bottom:5px; }
-.ku  { font-family:var(--fm); font-size:11px; color:var(--tm); margin-top:3px; }
-.tl  { font-family:var(--fp); font-size:10px; font-weight:600; letter-spacing:3px; text-transform:uppercase; color:var(--tm); margin-bottom:5px; }
-
-.pp  { font-family:var(--fm); font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase; padding:4px 14px; border-radius:20px; display:inline-block; }
-.ppp { background:rgba(0,209,255,.15);  color:var(--cyan);  border:1px solid rgba(0,209,255,.4);  }
-.ppm { background:rgba(255,181,71,.12); color:var(--amber); border:1px solid rgba(255,181,71,.35);}
-.ppd { background:rgba(255,62,62,.14);  color:var(--red);   border:1px solid rgba(255,62,62,.4);  }
-
-.pt  { height:6px; background:rgba(255,255,255,.07); border-radius:3px; overflow:hidden; margin:6px 0 3px; }
-.pbc { height:100%; background:linear-gradient(90deg,#00D1FF,#0099CC); border-radius:3px; }
-.pba { height:100%; background:linear-gradient(90deg,#FFB547,#CC8800); border-radius:3px; }
-.pr  { display:flex; justify-content:space-between; font-family:var(--fm); font-size:11px; color:var(--tm); }
-
-.pl-row {
-    display:flex; align-items:center; justify-content:space-between;
-    padding:9px 0; border-bottom:1px solid var(--border);
-    font-family:var(--fm); font-size:12px;
-}
-.pl-row:last-child { border-bottom:none; }
-.pl-n { font-size:13px; color:var(--tp); font-weight:600; }
-.pl-r { font-size:10px; color:var(--td); letter-spacing:1px; }
-
-.nb-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-top:10px; }
-.nb-cell {
-    text-align:center; padding:10px 4px;
-    border-radius:8px; border:1px solid var(--border);
-    font-family:var(--fm); font-size:11px; font-weight:600;
+.trow:last-child { border-bottom: none; }
+.trow-hdr {
+    font-size: 10px; font-weight: 600; letter-spacing: 1px;
+    text-transform: uppercase; color: #94A3B8;
+    padding-bottom: 8px; border-bottom: 2px solid #E2E8F0; margin-bottom: 4px;
 }
 
-.mh { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; padding-bottom:14px; border-bottom:1px solid var(--border); }
-.mh-logo { font-family:var(--fm); font-size:20px; font-weight:700; color:var(--tp); }
-.mh-logo span { color:var(--cyan); }
-.mh-meta { font-family:var(--fm); font-size:11px; color:var(--td); text-align:right; }
-.ld { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--red); margin-right:6px; animation:pulse 1.4s ease-in-out infinite; }
-@keyframes pulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.4;transform:scale(.8);} }
+/* Win prob bar */
+.wp-team { font-size: 12px; font-weight: 600; color: #374151; }
+.wp-pct  { font-size: 14px; font-weight: 700; }
 
-.ni { border-bottom:1px solid var(--border); padding:9px 0; font-size:13px; line-height:1.5; }
-.ni:last-child { border-bottom:none; }
-.ni-s { font-family:var(--fm); font-size:10px; color:var(--td); margin-top:2px; }
-
-.vd {
-    background:rgba(0,209,255,.04);
-    border:1px solid rgba(0,209,255,.18);
-    border-left:3px solid var(--cyan);
-    border-radius:10px; padding:20px 26px; margin-top:14px;
+/* Predict box */
+.predict-box {
+    background: #F0FDF4; border: 1px solid #BBF7D0;
+    border-left: 4px solid #16A34A;
+    border-radius: 8px; padding: 14px 18px;
 }
-.vd-h { font-family:var(--fm); font-size:11px; letter-spacing:2.5px; color:var(--cyan); margin-bottom:10px; }
+.predict-box.warn {
+    background: #FFFBEB; border-color: #FDE68A;
+    border-left-color: #D97706;
+}
+.predict-box.danger {
+    background: #FEF2F2; border-color: #FECACA;
+    border-left-color: #DC2626;
+}
 
-.mt { height:4px; background:rgba(255,255,255,.06); border-radius:2px; overflow:hidden; margin:4px 0; }
-.mf { height:100%; border-radius:2px; }
+/* News */
+.news-item { padding: 10px 0; border-bottom: 1px solid #F1F5F9; }
+.news-item:last-child { border-bottom: none; }
+.news-item a { color: #1E40AF; text-decoration: none; font-size: 13px; font-weight: 500; line-height: 1.5; }
+.news-item a:hover { text-decoration: underline; }
+.news-src  { font-size: 11px; color: #94A3B8; margin-top: 3px; }
 
-.pb1 { background:rgba(0,209,255,.05);   border:1px solid rgba(0,209,255,.18);   border-left:3px solid var(--cyan);   border-radius:8px; padding:14px 18px; margin-bottom:10px; }
-.pb2 { background:rgba(255,62,62,.05);   border:1px solid rgba(255,62,62,.18);   border-left:3px solid var(--red);    border-radius:8px; padding:14px 18px; margin-bottom:10px; }
-.pb3 { background:rgba(255,181,71,.05);  border:1px solid rgba(255,181,71,.18);  border-left:3px solid var(--amber);  border-radius:8px; padding:14px 18px; margin-bottom:10px; }
-.pb4 { background:rgba(191,127,255,.05); border:1px solid rgba(191,127,255,.18); border-left:3px solid var(--purple); border-radius:8px; padding:14px 18px; margin-bottom:10px; }
+/* Controls bar */
+.ctrl-bar {
+    background: #1E293B; color: white;
+    padding: 8px 20px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+}
+.ctrl-logo { font-size: 16px; font-weight: 700; letter-spacing: 1px; color: white; }
+.ctrl-logo span { color: #38BDF8; }
+.ctrl-time { font-size: 11px; color: #94A3B8; }
+
+/* Stacked mini stat */
+.mini-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mini-stat { background: #F8FAFC; border-radius: 8px; padding: 10px 12px; border: 1px solid #E2E8F0; }
+.mini-stat .val { font-size: 18px; font-weight: 700; color: #1E293B; }
+.mini-stat .lbl { font-size: 10px; color: #94A3B8; text-transform: uppercase; letter-spacing: 1px; }
+.mini-stat .sub { font-size: 11px; color: #64748B; margin-top: 2px; }
+
+/* Scoreboard match header */
+.match-hdr {
+    background: #1E293B; color: white;
+    border-radius: 10px; padding: 14px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 2px;
+}
+.match-name { font-size: 13px; font-weight: 600; color: #F1F5F9; }
+.match-venue{ font-size: 11px; color: #94A3B8; margin-top: 2px; }
+.match-status { font-size: 12px; font-weight: 600; color: #4ADE80; }
+
+/* Player rows */
+.bat-row { display: grid; grid-template-columns: 2fr 60px 60px 60px 60px 80px; gap: 4px; align-items:center; padding: 8px 4px; border-bottom: 1px solid #F1F5F9; font-size:13px; }
+.bowl-row { display: grid; grid-template-columns: 2fr 60px 60px 70px 70px 70px; gap: 4px; align-items:center; padding: 8px 4px; border-bottom: 1px solid #F1F5F9; font-size:13px; }
+.row-hdr  { font-size:10px; font-weight:700; letter-spacing:1px; color:#94A3B8; text-transform:uppercase; padding: 4px 4px 8px; border-bottom: 2px solid #E2E8F0; }
+.player-name { font-weight:600; color:#1E293B; }
+.player-team { font-size:10px; color:#94A3B8; }
+.num-cell { text-align:right; color:#374151; font-weight:500; }
+.highlight { color:#DC2626; font-weight:700; }
+.good { color:#16A34A; font-weight:600; }
+.warn { color:#D97706; font-weight:600; }
+.bad  { color:#DC2626; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────
-# 3. PLOTLY HELPERS
+# 3. DATA LAYER
 # ─────────────────────────────────────────────────────────────────
-BG   = "rgba(0,0,0,0)"
-GRID = "rgba(255,255,255,0.05)"
-FC   = "#7D8590"
-FF   = "JetBrains Mono, monospace"
-
-def _layout(**kw):
-    return dict(
-        paper_bgcolor=BG, plot_bgcolor=BG,
-        font=dict(family=FF, color=FC, size=11),
-        margin=dict(l=10, r=10, t=34, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1, bgcolor=BG, font=dict(size=10)),
-        **kw,
-    )
-
-def _ax(title="", sfx="", rng=None, **kw):
-    d = dict(title=title, showgrid=True, gridcolor=GRID,
-             zeroline=False, tickfont=dict(size=10),
-             linecolor="rgba(255,255,255,0.08)")
-    if sfx:   d["ticksuffix"] = sfx
-    if rng:   d["range"] = rng
-    d.update(kw)
-    return d
-
-def _ax2(title=""):
-    return dict(title=title, showgrid=False, zeroline=False,
-                tickfont=dict(size=10), linecolor="rgba(255,255,255,0.08)",
-                overlaying="y", side="right")
-
-
-# ─────────────────────────────────────────────────────────────────
-# 4. DATA LAYER  (v3.4 — live transformer + fallback)
-# ─────────────────────────────────────────────────────────────────
-
 TEAM_MAP = {
     "royal challengers bengaluru": "RCB",
     "royal challengers bangalore":  "RCB",
@@ -245,1155 +201,634 @@ TEAM_MAP = {
     "gujarat titans":               "GT",
 }
 
-def _team_short(name: str) -> str:
+TEAM_COLORS = {
+    "RCB": "#DC2626", "SRH": "#D97706", "MI": "#1D4ED8",
+    "CSK": "#F59E0B", "KKR": "#7C3AED", "RR": "#EC4899",
+    "DC": "#2563EB", "PBKS": "#DC2626", "LSG": "#0EA5E9", "GT": "#0D9488",
+}
+
+def _c(short): return TEAM_COLORS.get(short, "#64748B")
+
+def _ts(name):
     n = (name or "").lower().strip()
     for full, short in TEAM_MAP.items():
-        if full in n:
-            return short
+        if full in n: return short
     parts = (name or "").split()
     return "".join(p[0] for p in parts[:3]).upper() if parts else "UNK"
 
-def _int(v, default=0):
-    try:
-        return int(str(v).split("/")[0].strip())
-    except Exception:
-        return default
+def _int(v, d=0):
+    try: return int(str(v).split("/")[0].strip())
+    except: return d
 
-def _float(v, default=0.0):
-    try:
-        return float(str(v).strip())
-    except Exception:
-        return default
+def _float(v, d=0.0):
+    try: return float(str(v).strip())
+    except: return d
 
-def _win_prob(runs_scored, wickets_fallen, overs_faced, target, total_overs=20):
-    if target <= 0:
-        return 50, 50
-    balls_used   = int(overs_faced) * 6 + round((overs_faced % 1) * 10)
-    balls_total  = total_overs * 6
-    balls_left   = max(0, balls_total - balls_used)
-    runs_needed  = target - runs_scored
-    wickets_left = 10 - wickets_fallen
-    if runs_needed <= 0:
-        return 95, 5
-    if balls_left <= 0:
-        return 5, 95
-    wkt_resource   = wickets_left / 10
-    ball_resource  = balls_left / balls_total
-    resource_left  = wkt_resource * 0.5 + ball_resource * 0.5
-    run_difficulty = (runs_needed * 6 / balls_left) / 10.0
-    prob = 50 + (resource_left - run_difficulty) * 80
-    prob = max(5, min(95, int(prob)))
-    return prob, 100 - prob
+def _win_prob(r, w, o, target, total=20):
+    if target <= 0: return 50, 50
+    bu = int(o)*6 + round((o%1)*10)
+    bl = max(0, total*6 - bu)
+    rn = target - r
+    wl = 10 - w
+    if rn <= 0: return 95, 5
+    if bl <= 0: return 5, 95
+    res = wl/10*0.5 + bl/(total*6)*0.5
+    dif = (rn*6/bl)/10.0
+    p = max(5, min(95, int(50 + (res - dif)*80)))
+    return p, 100-p
 
-def _parse_innings_dict(inn: dict) -> dict:
-    label = inn.get("inning", inn.get("bat", inn.get("team", "")))
-    r  = _int(inn.get("r", inn.get("runs", 0)))
-    w  = _int(inn.get("w", inn.get("wickets", 0)))
-    o  = _float(inn.get("o", inn.get("overs", 0)))
-    rr = round(r / o, 2) if o > 0 else 0.0
-    return {
-        "name":    label,
-        "short":   _team_short(label),
-        "score":   str(r),
-        "wickets": str(w),
-        "overs":   str(o),
-        "rr":      str(rr),
-        "_r": r, "_w": w, "_o": o,
-    }
-
-def _extract_batters_from_raw(raw: dict) -> list:
-    batters = []
-    try:
-        data = raw.get("data", raw)
-        if isinstance(data, list):
-            data = data[0] if data else {}
-        scorecard = data.get("scorecard", data.get("score", []))
-        if not scorecard:
-            return []
-        last_inn  = scorecard[-1]
-        inn_label = last_inn.get("inning", "")
-        team      = _team_short(inn_label)
-        for b in last_inn.get("batting", []):
-            name  = b.get("batsman", b.get("name", ""))
-            if not name:
-                continue
-            runs  = _int(b.get("r",  b.get("runs",  0)))
-            balls = max(1, _int(b.get("b", b.get("balls", 1))))
-            fours = _int(b.get("4s", b.get("fours", 0)))
-            sixes = _int(b.get("6s", b.get("sixes", 0)))
-            sr    = round(runs / balls * 100, 1)
-            form  = min(100, int(sr * 0.5 + runs * 0.3 + fours * 2 + sixes * 3))
-            p50   = min(99, max(5, 99 if runs >= 50 else int(runs / 50 * 100)))
-            p30   = min(99, max(5, 99 if runs >= 30 else int(runs / 30 * 100)))
-            batters.append({
-                "name": name, "team": team,
-                "runs": runs, "balls": balls,
-                "sr": sr, "4s": fours, "6s": sixes,
-                "form": form, "p50": p50, "p30": p30,
-            })
-    except Exception:
-        pass
-    return batters if len(batters) >= 2 else []
-
-def _extract_bowlers_from_raw(raw: dict) -> list:
-    bowlers = []
-    try:
-        data = raw.get("data", raw)
-        if isinstance(data, list):
-            data = data[0] if data else {}
-        scorecard    = data.get("scorecard", data.get("score", []))
-        if not scorecard:
-            return []
-        last_inn     = scorecard[-1]
-        inn_label    = last_inn.get("inning", "")
-        batting_team = _team_short(inn_label)
-        first_inn    = scorecard[0]
-        first_label  = first_inn.get("inning", "")
-        bowling_team = _team_short(first_label) if batting_team != _team_short(first_label) else batting_team
-        for b in last_inn.get("bowling", []):
-            name  = b.get("bowler", b.get("name", ""))
-            if not name:
-                continue
-            overs  = _float(b.get("o",  b.get("overs",   0)))
-            runs   = _int(b.get("r",    b.get("runs",    0)))
-            wkts   = _int(b.get("w",    b.get("wickets", 0)))
-            maiden = _int(b.get("m",    b.get("maidens", 0)))
-            econ   = round(runs / overs, 2) if overs > 0 else 0.0
-            dot    = min(99, int(maiden * 12 + max(0, 8 - econ) * 4))
-            avg    = round(runs / wkts, 1) if wkts > 0 else 0.0
-            threat = min(99, int(wkts * 25 + max(0, 10 - econ) * 4 + dot * 0.3))
-            bowlers.append({
-                "name": name, "team": bowling_team,
-                "overs": overs, "runs": runs, "wkts": wkts,
-                "econ": econ, "dot": dot, "threat": threat, "avg": avg,
-            })
-    except Exception:
-        pass
-    return bowlers if len(bowlers) >= 2 else []
-
-def _transform_scorecard(raw: dict):
-    if not raw:
-        return None
-    try:
-        data = raw.get("data", raw)
-        if isinstance(data, list):
-            data = data[0] if data else {}
-        if not data:
-            return None
-        name   = data.get("name",   data.get("matchDesc",   ""))
-        venue  = data.get("venue",  data.get("groundName",  ""))
-        status = data.get("status", data.get("matchStatus", "LIVE"))
-        score  = data.get("score",  data.get("scorecard",   []))
-        if not score:
-            return None
-        inn1_raw = score[0] if len(score) > 0 else {}
-        inn2_raw = score[1] if len(score) > 1 else {}
-        inn1 = _parse_innings_dict(inn1_raw)
-        inn2 = _parse_innings_dict(inn2_raw) if inn2_raw else None
-        second_innings = inn2 is not None
-
-        bat_inn   = inn2 if second_innings else inn1
-        field_inn = inn1 if second_innings else {
-            "name": "", "short": "TBD",
-            "score": "—", "wickets": "—", "overs": "0.0", "rr": "0.0",
-            "_r": 0, "_w": 0, "_o": 0.0,
-        }
-
-        target      = inn1["_r"] + 1 if second_innings else 0
-        bat_r       = bat_inn["_r"]
-        bat_w       = bat_inn["_w"]
-        bat_o       = bat_inn["_o"]
-        runs_needed = max(0, target - bat_r) if target > 0 else 0
-        balls_used  = int(bat_o) * 6 + round((bat_o % 1) * 10)
-        balls_left  = max(0, 120 - balls_used)
-        req_rr      = round((runs_needed * 6) / balls_left, 2) if (balls_left > 0 and runs_needed > 0) else 0.0
-        phase       = "powerplay" if bat_o <= 6 else ("death" if bat_o >= 15 else "middle")
-        bat_wp, fld_wp = _win_prob(bat_r, bat_w, bat_o, target) if target > 0 else (50, 50)
-        rcb_batting = "RCB" in bat_inn["short"]
-
-        return {
-            "match":        name,
-            "venue":        venue,
-            "status":       status,
-            "rcb":          bat_inn   if rcb_batting else field_inn,
-            "srh":          field_inn if rcb_batting else bat_inn,
-            "target":       target,
-            "required":     runs_needed,
-            "req_rr":       req_rr,
-            "balls_left":   balls_left,
-            "phase":        phase,
-            "rcb_win_prob": bat_wp  if rcb_batting else fld_wp,
-            "srh_win_prob": fld_wp  if rcb_batting else bat_wp,
-        }
-    except Exception:
-        return None
 
 @st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
-def _fetch_match_list():
+def _fetch_list():
     try:
-        r = requests.get(
-            f"https://{RAPIDAPI_HOST}/matches/v1/live",
-            headers=API_HEADERS, timeout=8,
-        )
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
+        r = requests.get(f"https://{RAPIDAPI_HOST}/matches/v1/live",
+                         headers=API_HEADERS, timeout=8)
+        if r.status_code == 200: return r.json()
+    except: pass
     return None
 
 @st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
-def _fetch_scorecard(match_id):
+def _fetch_scard(mid):
     try:
-        r = requests.get(
-            f"https://{RAPIDAPI_HOST}/mcenter/v1/{match_id}/hscard",
-            headers=API_HEADERS, timeout=8,
-        )
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
+        r = requests.get(f"https://{RAPIDAPI_HOST}/mcenter/v1/{mid}/hscard",
+                         headers=API_HEADERS, timeout=8)
+        if r.status_code == 200: return r.json()
+    except: pass
     return None
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_news():
-    url = "https://news.google.com/rss/search?q=IPL+2026&hl=en-IN&gl=IN&ceid=IN:en"
     try:
-        feed = feedparser.parse(url)
-        return [
-            {
-                "title":     e.get("title", ""),
-                "source":    e.get("source", {}).get("title", ""),
-                "published": e.get("published", ""),
-                "link":      e.get("link", "#"),
-            }
-            for e in feed.entries[:8]
-        ]
-    except Exception:
-        return []
+        feed = feedparser.parse(
+            "https://news.google.com/rss/search?q=IPL+2026&hl=en-IN&gl=IN&ceid=IN:en")
+        return [{"title": e.get("title",""), "source": e.get("source",{}).get("title",""),
+                 "published": e.get("published","")[:22], "link": e.get("link","#")}
+                for e in feed.entries[:7]]
+    except: return []
 
 
-def _parse_cricbuzz_live(raw_list: dict) -> list:
-    """
-    Flatten Cricbuzz live match list into a simple list of dicts with keys:
-      matchId, team1, team2, seriesName, status, score1, score2
-    """
-    results = []
+def _parse_list(raw):
+    out = []
     try:
-        for type_match in raw_list.get("typeMatches", []):
-            for series_match in type_match.get("seriesMatches", []):
-                wrapper = series_match.get("seriesAdWrapper", {})
-                series_name = wrapper.get("seriesName", "")
-                for match in wrapper.get("matches", []):
-                    mi     = match.get("matchInfo", {})
-                    ms     = match.get("matchScore", {})
-                    mid    = str(mi.get("matchId", ""))
-                    team1  = mi.get("team1", {}).get("teamName", "")
-                    team2  = mi.get("team2", {}).get("teamName", "")
-                    status = mi.get("status", "")
-                    # scores may not exist for upcoming
-                    t1s = ms.get("team1Score", {})
-                    t2s = ms.get("team2Score", {})
-                    venue_info = mi.get("venueInfo", {})
-                    venue = f"{venue_info.get('ground', '')}, {venue_info.get('city', '')}".strip(", ")
-                    results.append({
-                        "matchId":    mid,
-                        "team1":      team1,
-                        "team2":      team2,
-                        "seriesName": series_name,
-                        "status":     status,
+        for tm in raw.get("typeMatches", []):
+            for sm in tm.get("seriesMatches", []):
+                wr = sm.get("seriesAdWrapper", {})
+                sname = wr.get("seriesName","")
+                for m in wr.get("matches",[]):
+                    mi  = m.get("matchInfo",{})
+                    ms  = m.get("matchScore",{})
+                    vi  = mi.get("venueInfo",{})
+                    venue = f"{vi.get('ground','')}, {vi.get('city','')}".strip(", ")
+                    out.append({
+                        "matchId":    str(mi.get("matchId","")),
+                        "team1":      mi.get("team1",{}).get("teamName",""),
+                        "team2":      mi.get("team2",{}).get("teamName",""),
+                        "seriesName": sname,
+                        "status":     mi.get("status",""),
+                        "state":      mi.get("state",""),
                         "venue":      venue,
-                        "t1_score":   t1s,
-                        "t2_score":   t2s,
+                        "t1s":        ms.get("team1Score",{}),
+                        "t2s":        ms.get("team2Score",{}),
                     })
-    except Exception:
-        pass
-    return results
+    except: pass
+    return out
 
 
-def _parse_cricbuzz_scorecard(raw_sc: dict, match_meta: dict) -> tuple:
-    """
-    Parse Cricbuzz /mcenter/v1/{id}/hscard response into (sc_dict, batters, bowlers).
-    Returns (None, [], []) on failure.
-    """
+def _build_sc(m):
     try:
-        data      = raw_sc.get("scoreCard", [])
-        match_hdr = raw_sc.get("matchHeader", {})
+        t1, t2 = m["team1"], m["team2"]
+        s1, s2 = _ts(t1), _ts(t2)
 
-        if not data:
-            return None, [], []
+        def inn(name, short, sb):
+            i = sb.get("inngs1",{})
+            r = _int(i.get("runs",0)); w = _int(i.get("wickets",0))
+            o = _float(i.get("overs",0))
+            rr = round(r/o,2) if o>0 else 0.0
+            return {"name":name,"short":short,"score":str(r),"wickets":str(w),
+                    "overs":str(o),"rr":str(rr),"_r":r,"_w":w,"_o":o}
 
-        team1_name = match_hdr.get("team1", {}).get("name", match_meta.get("team1", ""))
-        team2_name = match_hdr.get("team2", {}).get("name", match_meta.get("team2", ""))
-        venue      = match_hdr.get("matchInfo", {}).get("ground", {}).get("longName", "")
-        status     = match_hdr.get("status", "LIVE")
-        match_name = f"{team1_name} vs {team2_name}"
+        i1 = inn(t1, s1, m["t1s"])
+        i2 = inn(t2, s2, m["t2s"]) if m["t2s"] else None
 
-        # innings 0=first, 1=second (if exists)
-        inn1 = data[0] if len(data) > 0 else None
-        inn2 = data[1] if len(data) > 1 else None
+        two = i2 is not None and i2["_r"] > 0
+        bat = i2 if two else i1
+        fld = i1 if two else {"name":t2,"short":s2,"score":"—","wickets":"—",
+                               "overs":"0.0","rr":"0.0","_r":0,"_w":0,"_o":0.0}
 
-        def parse_inn(inn, team_name):
-            if not inn:
-                return None
-            score = inn.get("scoreDetails", {})
-            r = _int(score.get("runs", 0))
-            w = _int(score.get("wickets", 0))
-            o = _float(score.get("overs", 0))
-            rr = round(r / o, 2) if o > 0 else 0.0
-            return {
-                "name":    team_name,
-                "short":   _team_short(team_name),
-                "score":   str(r),
-                "wickets": str(w),
-                "overs":   str(o),
-                "rr":      str(rr),
-                "_r": r, "_w": w, "_o": o,
-            }
-
-        t1_inn = parse_inn(inn1, team1_name)
-        t2_inn = parse_inn(inn2, team2_name)
-
-        if t1_inn is None:
-            return None, [], []
-
-        second_innings = t2_inn is not None
-        bat_inn   = t2_inn if second_innings else t1_inn
-        field_inn = t1_inn if second_innings else {
-            "name": team2_name, "short": _team_short(team2_name),
-            "score": "—", "wickets": "—", "overs": "0.0", "rr": "0.0",
-            "_r": 0, "_w": 0, "_o": 0.0,
-        }
-
-        target      = t1_inn["_r"] + 1 if second_innings else 0
-        runs_needed = max(0, target - bat_inn["_r"]) if target > 0 else 0
-        balls_used  = int(bat_inn["_o"]) * 6 + round((bat_inn["_o"] % 1) * 10)
-        balls_left  = max(0, 120 - balls_used)
-        req_rr      = round((runs_needed * 6) / balls_left, 2) if (balls_left > 0 and runs_needed > 0) else 0.0
-        phase       = "powerplay" if bat_inn["_o"] <= 6 else ("death" if bat_inn["_o"] >= 15 else "middle")
-        bat_wp, fld_wp = _win_prob(bat_inn["_r"], bat_inn["_w"], bat_inn["_o"], target) if target > 0 else (50, 50)
-
-        rcb_bat = "RCB" in bat_inn["short"]
-        sc_dict = {
-            "match":        match_name,
-            "venue":        venue,
-            "status":       status,
-            "rcb":          bat_inn   if rcb_bat else field_inn,
-            "srh":          field_inn if rcb_bat else bat_inn,
-            "target":       target,
-            "required":     runs_needed,
-            "req_rr":       req_rr,
-            "balls_left":   balls_left,
-            "phase":        phase,
-            "rcb_win_prob": bat_wp if rcb_bat else fld_wp,
-            "srh_win_prob": fld_wp if rcb_bat else bat_wp,
-        }
-
-        # Extract batters from the active innings
-        batters = []
-        active_inn = inn2 if second_innings else inn1
-        bat_team   = bat_inn["short"]
-        bats_data  = active_inn.get("batTeamDetails", {}).get("batsmenData", {})
-        for key, b in bats_data.items():
-            name  = b.get("batName", "")
-            if not name:
-                continue
-            runs  = _int(b.get("runs", 0))
-            balls = max(1, _int(b.get("balls", 1)))
-            fours = _int(b.get("fours", 0))
-            sixes = _int(b.get("sixes", 0))
-            sr    = round(_float(b.get("strikeRate", 0)) or runs / balls * 100, 1)
-            form  = min(100, int(sr * 0.5 + runs * 0.3 + fours * 2 + sixes * 3))
-            p50   = min(99, max(5, 99 if runs >= 50 else int(runs / 50 * 100)))
-            p30   = min(99, max(5, 99 if runs >= 30 else int(runs / 30 * 100)))
-            batters.append({
-                "name": name, "team": bat_team,
-                "runs": runs, "balls": balls,
-                "sr": sr, "4s": fours, "6s": sixes,
-                "form": form, "p50": p50, "p30": p30,
-            })
-
-        # Extract bowlers from the active innings
-        bowlers = []
-        bowl_team  = field_inn["short"]
-        bowls_data = active_inn.get("bowlTeamDetails", {}).get("bowlersData", {})
-        for key, b in bowls_data.items():
-            name  = b.get("bowlName", "")
-            if not name:
-                continue
-            overs  = _float(b.get("overs",   0))
-            runs   = _int(b.get("runs",      0))
-            wkts   = _int(b.get("wickets",   0))
-            maiden = _int(b.get("maidens",   0))
-            econ   = round(_float(b.get("economy", 0)) or (runs / overs if overs > 0 else 0), 2)
-            dot    = min(99, int(maiden * 12 + max(0, 8 - econ) * 4))
-            avg    = round(runs / wkts, 1) if wkts > 0 else 0.0
-            threat = min(99, int(wkts * 25 + max(0, 10 - econ) * 4 + dot * 0.3))
-            bowlers.append({
-                "name": name, "team": bowl_team,
-                "overs": overs, "runs": runs, "wkts": wkts,
-                "econ": econ, "dot": dot, "threat": threat, "avg": avg,
-            })
-
-        return sc_dict, (batters if len(batters) >= 2 else []), (bowlers if len(bowlers) >= 2 else [])
-
-    except Exception:
-        return None, [], []
-
-
-def _build_sc_from_match(match: dict) -> dict | None:
-    """
-    Build the sc dict directly from match-list data.
-    The match list already has runs/wickets/overs — no scorecard call needed.
-    """
-    try:
-        t1_name  = match["team1"]
-        t2_name  = match["team2"]
-        t1_short = _team_short(t1_name)
-        t2_short = _team_short(t2_name)
-        venue    = match.get("venue", "")
-        status   = match.get("status", "LIVE")
-        mid      = match["matchId"]
-
-        t1s = match.get("t1_score", {})
-        t2s = match.get("t2_score", {})
-
-        def inn_dict(name, short, score_block):
-            i1 = score_block.get("inngs1", {})
-            r  = _int(i1.get("runs", 0))
-            w  = _int(i1.get("wickets", 0))
-            o  = _float(i1.get("overs", 0))
-            rr = round(r / o, 2) if o > 0 else 0.0
-            return {
-                "name": name, "short": short,
-                "score": str(r), "wickets": str(w),
-                "overs": str(o), "rr": str(rr),
-                "_r": r, "_w": w, "_o": o,
-            }
-
-        inn1 = inn_dict(t1_name, t1_short, t1s)
-        inn2 = inn_dict(t2_name, t2_short, t2s) if t2s else None
-
-        second_innings = inn2 is not None and inn2["_r"] > 0
-        bat_inn   = inn2 if second_innings else inn1
-        field_inn = inn1 if second_innings else {
-            "name": t2_name, "short": t2_short,
-            "score": "—", "wickets": "—", "overs": "0.0", "rr": "0.0",
-            "_r": 0, "_w": 0, "_o": 0.0,
-        }
-
-        target      = inn1["_r"] + 1 if second_innings else 0
-        runs_needed = max(0, target - bat_inn["_r"]) if target > 0 else 0
-        balls_used  = int(bat_inn["_o"]) * 6 + round((bat_inn["_o"] % 1) * 10)
-        balls_left  = max(0, 120 - balls_used)
-        req_rr      = round((runs_needed * 6) / balls_left, 2) if (balls_left > 0 and runs_needed > 0) else 0.0
-        phase       = "powerplay" if bat_inn["_o"] <= 6 else ("death" if bat_inn["_o"] >= 15 else "middle")
-        bat_wp, fld_wp = _win_prob(bat_inn["_r"], bat_inn["_w"], bat_inn["_o"], target) if target > 0 else (50, 50)
-
-        # Figure out which short code is RCB/SRH
-        rcb_bat = "RCB" in bat_inn["short"]
-        srh_bat = "SRH" in bat_inn["short"]
-        rcb_inn = bat_inn   if rcb_bat else (field_inn if "RCB" in field_inn["short"] else bat_inn)
-        srh_inn = bat_inn   if srh_bat else (field_inn if "SRH" in field_inn["short"] else field_inn)
-
-        if rcb_bat:
-            rcb_wp, srh_wp = bat_wp, fld_wp
-        else:
-            rcb_wp, srh_wp = fld_wp, bat_wp
+        tgt = i1["_r"]+1 if two else 0
+        rn  = max(0, tgt - bat["_r"]) if tgt>0 else 0
+        bu  = int(bat["_o"])*6 + round((bat["_o"]%1)*10)
+        bl  = max(0, 120-bu)
+        rr  = round(rn*6/bl,2) if bl>0 and rn>0 else 0.0
+        ph  = "powerplay" if bat["_o"]<=6 else ("death" if bat["_o"]>=15 else "middle")
+        bwp, fwp = _win_prob(bat["_r"],bat["_w"],bat["_o"],tgt) if tgt>0 else (50,50)
 
         return {
-            "match":        f"{t1_name} vs {t2_name} — IPL 2026, Match {mid}",
-            "venue":        venue,
-            "status":       status,
-            "rcb":          rcb_inn,
-            "srh":          srh_inn,
-            "target":       target,
-            "required":     runs_needed,
-            "req_rr":       req_rr,
-            "balls_left":   balls_left,
-            "phase":        phase,
-            "rcb_win_prob": rcb_wp,
-            "srh_win_prob": srh_wp,
+            "match":     f"{t1} vs {t2}",
+            "venue":     m.get("venue",""),
+            "status":    m.get("status","LIVE"),
+            "bat":       bat,          # currently batting team
+            "field":     fld,          # currently fielding / yet to bat
+            "t1":        i1,           # team batting first (always t1)
+            "t2":        i2 or fld,    # team batting second
+            "target":    tgt,
+            "required":  rn,
+            "req_rr":    rr,
+            "balls_left":bl,
+            "phase":     ph,
+            "second_innings": two,
+            "bat_wp":    bwp,
+            "fld_wp":    fwp,
         }
-    except Exception:
-        return None
+    except: return None
 
 
-def resolve_live_match(debug=False):
-    raw_list = _fetch_match_list()
-    if debug and raw_list:
-        with st.expander("🔍 RAW — Match List (Cricbuzz)", expanded=True):
-            st.json(raw_list)
-    if not raw_list:
-        return None, [], []
+def _parse_scard(raw, sc):
+    """Extract real-time batters and bowlers from Cricbuzz scorecard."""
+    batters, bowlers = [], []
+    try:
+        cards = raw.get("scoreCard", [])
+        if not cards: return [], []
 
-    matches = _parse_cricbuzz_live(raw_list)
+        # Use the latest innings card
+        card = cards[-1]
+        bat_short = sc["bat"]["short"]
+        fld_short = sc["field"]["short"]
 
-    for match in matches:
-        series = match["seriesName"].upper()
-        status = match["status"].lower()
+        # Batters
+        bats = card.get("batTeamDetails",{}).get("batsmenData",{})
+        for _, b in bats.items():
+            name = b.get("batName","")
+            if not name: continue
+            r  = _int(b.get("runs",0))
+            bl = max(1,_int(b.get("balls",1)))
+            f4 = _int(b.get("fours",0))
+            f6 = _int(b.get("sixes",0))
+            sr = round(_float(b.get("strikeRate",0)) or r/bl*100, 1)
+            oot= b.get("outDesc","batting") or "batting"
+            batters.append({"name":name,"team":bat_short,"runs":r,"balls":bl,
+                            "sr":sr,"4s":f4,"6s":f6,"status":oot})
 
-        if "IPL" not in series and "INDIAN PREMIER" not in series:
-            continue
-        if "upcom" in status or "toss" in status or "yet to" in status or not match["matchId"]:
-            continue
+        # Bowlers
+        bwls = card.get("bowlTeamDetails",{}).get("bowlersData",{})
+        for _, b in bwls.items():
+            name = b.get("bowlName","")
+            if not name: continue
+            o  = _float(b.get("overs",0))
+            r  = _int(b.get("runs",0))
+            w  = _int(b.get("wickets",0))
+            m  = _int(b.get("maidens",0))
+            ec = round(_float(b.get("economy",0)) or (r/o if o>0 else 0),2)
+            bowlers.append({"name":name,"team":fld_short,"overs":o,"runs":r,
+                            "wkts":w,"maidens":m,"econ":ec})
+    except: pass
+    return batters, bowlers
 
-        # Step 1 — build sc directly from match-list (always works)
-        sc = _build_sc_from_match(match)
-        if not sc:
-            continue
 
-        # Step 2 — try scorecard for player detail (optional enrichment)
-        batters, bowlers = [], []
-        raw_sc = _fetch_scorecard(match["matchId"])
-        if debug and raw_sc:
-            with st.expander(f"🔍 RAW — Scorecard ({match['matchId']})", expanded=False):
-                st.json(raw_sc)
-        if raw_sc:
-            _, batters, bowlers = _parse_cricbuzz_scorecard(raw_sc, match)
+def resolve_live(debug=False):
+    raw = _fetch_list()
+    if debug and raw:
+        with st.expander("🔍 RAW — Match List", expanded=True): st.json(raw)
+    if not raw: return None, [], []
 
-        return sc, batters, bowlers
+    for m in _parse_list(raw):
+        sn  = m["seriesName"].upper()
+        st_ = m["status"].lower()
+        if "IPL" not in sn and "INDIAN PREMIER" not in sn: continue
+        if not m["matchId"] or "toss" in st_ or "upcom" in st_: continue
+
+        sc = _build_sc(m)
+        if not sc: continue
+
+        bat, bowl = [], []
+        rscard = _fetch_scard(m["matchId"])
+        if debug and rscard:
+            with st.expander(f"🔍 RAW — Scorecard ({m['matchId']})", expanded=False):
+                st.json(rscard)
+        if rscard:
+            bat, bowl = _parse_scard(rscard, sc)
+
+        return sc, bat, bowl
 
     return None, [], []
 
 
 # ─────────────────────────────────────────────────────────────────
-# 5. DEMO DATA
+# 4. DEMO DATA (fallback only)
 # ─────────────────────────────────────────────────────────────────
-def demo_sc():
-    return {
-        "match":  "RCB vs SRH — IPL 2026, Match 1",
-        "venue":  "M. Chinnaswamy Stadium, Bengaluru",
-        "status": "LIVE — 2nd Innings",
-        "rcb": {"name":"Royal Challengers Bengaluru","short":"RCB",
-                "score":"142","wickets":"3","overs":"15.3","rr":"9.15"},
-        "srh": {"name":"Sunrisers Hyderabad","short":"SRH",
-                "score":"187","wickets":"10","overs":"20.0","rr":"9.35"},
-        "target":188,"required":46,"req_rr":6.86,
-        "balls_left":27,"phase":"death",
-        "rcb_win_prob":38,"srh_win_prob":62,
-    }
+def _demo_sc():
+    srh = {"name":"Sunrisers Hyderabad","short":"SRH","score":"186","wickets":"5",
+           "overs":"20.0","rr":"9.3","_r":186,"_w":5,"_o":20.0}
+    rcb = {"name":"Royal Challengers Bengaluru","short":"RCB","score":"142","wickets":"3",
+           "overs":"15.3","rr":"9.15","_r":142,"_w":3,"_o":15.3}
+    return {"match":"SRH vs RCB — IPL 2026, Match 1","venue":"M.Chinnaswamy Stadium, Bengaluru",
+            "status":"Royal Challengers Bengaluru opt to bowl","bat":rcb,"field":srh,
+            "t1":srh,"t2":rcb,"target":187,"required":45,"req_rr":6.75,"balls_left":27,
+            "phase":"death","second_innings":True,"bat_wp":45,"fld_wp":55}
 
-def demo_batters():
+def _demo_bat():
     return [
-        {"name":"Virat Kohli",      "team":"RCB","runs":72,"balls":48,"sr":150.0,"4s":8,"6s":3,"form":88,"p50":95,"p30":99},
-        {"name":"Rajat Patidar",    "team":"RCB","runs":34,"balls":22,"sr":154.5,"4s":3,"6s":2,"form":72,"p50":54,"p30":85},
-        {"name":"Glenn Maxwell",    "team":"RCB","runs":18,"balls":11,"sr":163.6,"4s":2,"6s":1,"form":81,"p50":40,"p30":68},
-        {"name":"Heinrich Klaasen", "team":"SRH","runs":58,"balls":32,"sr":181.2,"4s":5,"6s":5,"form":91,"p50":99,"p30":99},
-        {"name":"Pat Cummins",      "team":"SRH","runs":24,"balls":15,"sr":160.0,"4s":2,"6s":2,"form":74,"p50":22,"p30":61},
-        {"name":"Travis Head",      "team":"SRH","runs":9, "balls":8, "sr":112.5,"4s":1,"6s":0,"form":66,"p50":10,"p30":28},
+        {"name":"Ishan Kishan","team":"SRH","runs":43,"balls":28,"sr":153.6,"4s":4,"6s":3,"status":"batting"},
+        {"name":"Travis Head","team":"SRH","runs":68,"balls":41,"sr":165.9,"4s":7,"6s":4,"status":"batting"},
+        {"name":"Abhishek Sharma","team":"SRH","runs":12,"balls":9,"sr":133.3,"4s":2,"6s":0,"status":"c Maxwell b Siraj"},
     ]
 
-def demo_bowlers():
+def _demo_bowl():
     return [
-        {"name":"Jasprit Bumrah",    "team":"RCB","overs":4.0,"runs":22,"wkts":3,"econ":5.50,"dot":55,"threat":95,"avg":7.3},
-        {"name":"Yuzvendra Chahal",  "team":"RCB","overs":3.0,"runs":28,"wkts":1,"econ":9.33,"dot":38,"threat":70,"avg":28.0},
-        {"name":"Cameron Green",     "team":"RCB","overs":2.0,"runs":24,"wkts":1,"econ":12.0,"dot":30,"threat":55,"avg":24.0},
-        {"name":"Pat Cummins",       "team":"SRH","overs":4.0,"runs":24,"wkts":3,"econ":6.00,"dot":52,"threat":92,"avg":8.0},
-        {"name":"Bhuvneshwar Kumar", "team":"SRH","overs":3.0,"runs":21,"wkts":2,"econ":7.00,"dot":45,"threat":80,"avg":10.5},
-        {"name":"Jaydev Unadkat",    "team":"SRH","overs":2.0,"runs":28,"wkts":0,"econ":14.0,"dot":22,"threat":30,"avg":0},
+        {"name":"Mohammed Siraj","team":"RCB","overs":3.0,"runs":28,"wkts":2,"maidens":0,"econ":9.33},
+        {"name":"Yash Dayal","team":"RCB","overs":3.2,"runs":34,"wkts":1,"maidens":0,"econ":10.2},
+        {"name":"Krunal Pandya","team":"RCB","overs":2.0,"runs":18,"wkts":1,"maidens":0,"econ":9.0},
     ]
 
-def demo_partnerships():
-    return [
-        {"wkt":1,"runs":42,"balls":28,"rate":9.0, "pair":"Kohli & du Plessis"},
-        {"wkt":2,"runs":68,"balls":41,"rate":9.95,"pair":"Kohli & Patidar"},
-        {"wkt":3,"runs":32,"balls":18,"rate":10.67,"pair":"Kohli & Maxwell"},
-    ]
 
-def demo_history():
-    random.seed(7)
-    cum, data = 0, []
-    for o in range(1, 16):
-        r = random.randint(5, 18)
-        w = random.choices([0,1,2], weights=[70,25,5])[0]
-        cum += r
-        data.append({"over":o,"runs":r,"wkts":w,"cum":cum})
-    return data
+# ─────────────────────────────────────────────────────────────────
+# 5. PREDICTION ENGINE
+# ─────────────────────────────────────────────────────────────────
+def predict(sc):
+    """Generate live match prediction text based on current state."""
+    bat  = sc["bat"]
+    two  = sc["second_innings"]
+    rn   = sc["required"]
+    bl   = sc["balls_left"]
+    rr   = sc["req_rr"]
+    bwp  = sc["bat_wp"]
+    ph   = sc["phase"]
+    wl   = 10 - bat["_w"]
+    crr  = _float(bat["rr"])
+    o    = bat["_o"]
 
-def demo_momentum():
-    random.seed(42)
-    ov, wp, rr, req = [], [], [], []
-    prob = 55
-    for i in range(1, 16):
-        prob = max(5, min(95, prob + random.randint(-8,8)))
-        ov.append(i); wp.append(prob)
-        rr.append(round(random.uniform(6.5,14.5),2))
-        req.append(round(random.uniform(5.0,16.0),2))
-    return ov, wp, rr, req
-
-def next_ball_probs(sc):
-    rr = float(sc.get("req_rr", 7))
-    pressure = min(1.0, rr / 18.0)
-    dot  = max(10, 30 - pressure*10)
-    one  = max(15, 22 - pressure*5)
-    two  = max(8,  14 - pressure*3)
-    four = max(12, 18 + pressure*5)
-    six  = max(8,  10 + pressure*8)
-    wkt  = max(4,   6 + pressure*6)
-    tot  = dot+one+two+four+six+wkt
-    return {
-        "dot": round(dot/tot*100), "1": round(one/tot*100),
-        "2":   round(two/tot*100), "4": round(four/tot*100),
-        "6":   round(six/tot*100), "W": round(wkt/tot*100),
-    }
+    if not two:
+        # 1st innings — project final total
+        balls_used = int(o)*6 + round((o%1)*10)
+        balls_left = max(1, 120 - balls_used)
+        proj = bat["_r"] + round(crr * balls_left / 6)
+        if crr >= 10:
+            verdict = "🔥 Explosive Start"
+            clr = "green"
+            txt = (f"{bat['name']} are batting at **{crr}** RPO after {o} overs. "
+                   f"Projected total: **{proj}** — a challenging target for the chasing side.")
+        elif crr >= 8:
+            verdict = "✅ Solid Platform"
+            clr = "green"
+            txt = (f"Good start at **{crr}** RPO. Projected total around **{proj}**. "
+                   f"The team needs to accelerate in the {ph} overs.")
+        else:
+            verdict = "⚠️ Slow Start"
+            clr = "warn"
+            txt = (f"Below-par rate of **{crr}** RPO. Projected: **{proj}**. "
+                   f"Need big hits in the remaining overs to set a competitive total.")
+    else:
+        # 2nd innings — chase analysis
+        balls_per_wkt = round(bl / max(1, wl), 1)
+        if bwp >= 65:
+            verdict = "🟢 Chase On Track"
+            clr = "green"
+            txt = (f"Need **{rn}** off **{bl}** balls (Req: **{rr}** RPO). "
+                   f"Win probability: **{bwp}%**. With {wl} wickets in hand, "
+                   f"~{balls_per_wkt} balls per wicket to spare. Chase well within range.")
+        elif bwp >= 45:
+            verdict = "🟡 Evenly Poised"
+            clr = "warn"
+            txt = (f"**{rn}** needed off **{bl}** balls at **{rr}** RPO. "
+                   f"Win probability: **{bwp}%**. Pressure building — {wl} wickets left. "
+                   f"One partnership can swing this either way.")
+        else:
+            verdict = "🔴 Under Pressure"
+            clr = "danger"
+            txt = (f"**{rn}** off **{bl}** balls — required rate **{rr}** is steep. "
+                   f"Win probability: **{bwp}%**. Only {wl} wickets left. "
+                   f"Need a big over to get back in the game.")
+    return verdict, clr, txt
 
 
 # ─────────────────────────────────────────────────────────────────
-# 6. CHART BUILDERS
-# ─────────────────────────────────────────────────────────────────
-def chart_momentum(ov, wp, rr, req):
-    fig = make_subplots(specs=[[{"secondary_y":True}]])
-    fig.add_trace(go.Scatter(x=ov, y=wp, name="RCB Win Prob %",
-        mode="lines", line=dict(color="#00D1FF",width=2.5,shape="spline",smoothing=1.1),
-        fill="tozeroy", fillcolor="rgba(0,209,255,0.06)",
-        hovertemplate="Over %{x}: RCB %{y}%<extra></extra>"), secondary_y=False)
-    fig.add_trace(go.Scatter(x=ov, y=rr, name="Actual RR",
-        mode="lines", line=dict(color="#FFB547",width=1.8,dash="dot",shape="spline"),
-        hovertemplate="Over %{x}: RR %{y}<extra></extra>"), secondary_y=True)
-    fig.add_trace(go.Scatter(x=ov, y=req, name="Required RR",
-        mode="lines", line=dict(color="#FF3E3E",width=1.8,dash="dash",shape="spline"),
-        hovertemplate="Over %{x}: Req %{y}<extra></extra>"), secondary_y=True)
-    fig.add_hline(y=50, secondary_y=False,
-                  line_dash="dot", line_color="rgba(255,255,255,0.10)", line_width=1)
-    fig.update_layout(**_layout(
-        title=dict(text="WIN PROBABILITY & RUN RATE MATRIX",
-                   font=dict(size=11,color="#484F58"),x=0,xanchor="left"),
-        xaxis=_ax("Over"),
-        yaxis=_ax("Win Prob (%)", sfx="%", rng=[0,100]),
-        yaxis2=_ax2("Run Rate"),
-    ))
-    return fig
-
-def chart_run_progression(hist):
-    ov   = [h["over"] for h in hist]
-    runs = [h["runs"] for h in hist]
-    cum  = [h["cum"]  for h in hist]
-    wo   = [h["over"] for h in hist if h["wkts"]>0]
-    wc   = [h["cum"]  for h in hist if h["wkts"]>0]
-    fig  = make_subplots(specs=[[{"secondary_y":True}]])
-    fig.add_trace(go.Bar(x=ov, y=runs, name="Runs/Over",
-        marker=dict(color=["#FF3E3E" if r>14 else ("#FFB547" if r>10 else "#00D1FF") for r in runs], opacity=0.8),
-        hovertemplate="Over %{x}: %{y} runs<extra></extra>"), secondary_y=False)
-    fig.add_trace(go.Scatter(x=ov, y=cum, name="Cumulative",
-        mode="lines+markers", line=dict(color="#3DFF7A",width=2),
-        marker=dict(size=5,color="#3DFF7A"),
-        hovertemplate="After Over %{x}: %{y}<extra></extra>"), secondary_y=True)
-    if wo:
-        fig.add_trace(go.Scatter(x=wo, y=wc, name="Wicket",
-            mode="markers",
-            marker=dict(symbol="x",size=12,color="#FF3E3E",line=dict(width=2,color="#FF3E3E")),
-            hovertemplate="Wicket at Over %{x}<extra></extra>"), secondary_y=True)
-    fig.update_layout(**_layout(
-        title=dict(text="RUN PROGRESSION — OVER BY OVER",
-                   font=dict(size=11,color="#484F58"),x=0,xanchor="left"),
-        xaxis=_ax("Over"),
-        yaxis=_ax("Runs/Over"),
-        yaxis2=_ax2("Cumulative"),
-    ))
-    return fig
-
-def chart_wagon():
-    cats = ["Straight","Cover","Square Leg","Fine Leg","Mid-Wicket","Point"]
-    rcb  = [34,48,22,15,38,27]
-    srh  = [41,35,30,18,42,22]
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=rcb+[rcb[0]],theta=cats+[cats[0]],name="RCB",
-        fill="toself",line=dict(color="#00D1FF",width=2),fillcolor="rgba(0,209,255,0.08)"))
-    fig.add_trace(go.Scatterpolar(r=srh+[srh[0]],theta=cats+[cats[0]],name="SRH",
-        fill="toself",line=dict(color="#FFB547",width=2),fillcolor="rgba(255,181,71,0.06)"))
-    fig.update_layout(paper_bgcolor=BG,
-        polar=dict(bgcolor=BG,
-            radialaxis=dict(visible=True,range=[0,55],gridcolor="rgba(255,255,255,0.06)",color="#484F58"),
-            angularaxis=dict(gridcolor="rgba(255,255,255,0.06)",color="#7D8590")),
-        font=dict(family=FF,color=FC,size=10),
-        legend=dict(orientation="h",yanchor="top",y=-0.05,xanchor="center",x=0.5,bgcolor=BG),
-        margin=dict(l=20,r=20,t=30,b=20),
-        title=dict(text="SHOT ZONE DISTRIBUTION",font=dict(size=11,color="#484F58"),x=0.5,xanchor="center"))
-    return fig
-
-def chart_bowler_radar(bowlers, team):
-    bw = [b for b in bowlers if b["team"]==team]
-    cats = ["Wickets","Economy(inv)","Dot %","Avg(inv)","Threat"]
-    clrs = ["#00D1FF","#FFB547","#3DFF7A","#FF3E3E","#BF7FFF"]
-    fig = go.Figure()
-    for i, b in enumerate(bw):
-        ei  = max(0, 100 - b["econ"]*6)
-        ai  = max(0, 100 - b["avg"]*2) if b["avg"]>0 else 80
-        vals = [b["wkts"]*25, ei, b["dot"], ai, b["threat"]]
-        c = clrs[i % len(clrs)]
-        r,g,bl = int(c[1:3],16), int(c[3:5],16), int(c[5:7],16)
-        fig.add_trace(go.Scatterpolar(
-            r=vals+[vals[0]], theta=cats+[cats[0]],
-            name=b["name"].split()[-1], fill="toself",
-            line=dict(color=c,width=2),
-            fillcolor=f"rgba({r},{g},{bl},0.07)"))
-    fig.update_layout(paper_bgcolor=BG,
-        polar=dict(bgcolor=BG,
-            radialaxis=dict(visible=True,range=[0,100],gridcolor="rgba(255,255,255,0.05)",color="#484F58"),
-            angularaxis=dict(gridcolor="rgba(255,255,255,0.06)",color="#7D8590")),
-        font=dict(family=FF,color=FC,size=10),
-        legend=dict(orientation="h",yanchor="top",y=-0.08,xanchor="center",x=0.5,bgcolor=BG),
-        margin=dict(l=20,r=20,t=30,b=20),
-        title=dict(text=f"{team} BOWLING THREAT RADAR",font=dict(size=11,color="#484F58"),x=0.5,xanchor="center"))
-    return fig
-
-def chart_partnership(parts):
-    labels = [f"P{p['wkt']}: {p['pair']}" for p in parts]
-    runs   = [p["runs"] for p in parts]
-    fig = go.Figure(go.Bar(
-        x=runs, y=labels, orientation="h",
-        marker=dict(color=["#00D1FF","#FFB547","#3DFF7A"],opacity=0.8),
-        text=[f"{r} runs · {p['balls']} balls · {p['rate']} rpo" for r,p in zip(runs,parts)],
-        textfont=dict(family=FF,size=10,color="#E6EDF3"),
-        textposition="inside",
-        hovertemplate="%{y}: %{x} runs<extra></extra>"))
-    fig.update_layout(**_layout(
-        title=dict(text="PARTNERSHIP ANALYSIS",font=dict(size=11,color="#484F58"),x=0,xanchor="left"),
-        xaxis=_ax("Runs"),
-        yaxis=dict(showgrid=False,tickfont=dict(size=10,family=FF),color=FC),
-        height=180))
-    return fig
-
-def chart_batter_compare(batters):
-    names  = [b["name"].split()[-1] for b in batters]
-    runs   = [b["runs"] for b in batters]
-    sr     = [b["sr"]   for b in batters]
-    colors = ["#00D1FF" if b["team"]=="RCB" else "#FFB547" for b in batters]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=names,y=runs,name="Runs",
-        marker=dict(color=colors,opacity=0.75),
-        hovertemplate="%{x}: %{y} runs<extra></extra>"))
-    fig.add_trace(go.Scatter(x=names,y=sr,name="Strike Rate",
-        mode="lines+markers",yaxis="y2",
-        line=dict(color="#3DFF7A",width=2),
-        marker=dict(size=8,color="#3DFF7A"),
-        hovertemplate="%{x}: SR %{y}<extra></extra>"))
-    fig.update_layout(**_layout(
-        title=dict(text="BATTER COMPARISON — Runs & Strike Rate",
-                   font=dict(size=11,color="#484F58"),x=0,xanchor="left"),
-        xaxis=_ax(""),
-        yaxis=_ax("Runs"),
-        yaxis2=_ax2("Strike Rate")))
-    return fig
-
-
-# ─────────────────────────────────────────────────────────────────
-# 7. UI RENDERERS
+# 6. UI COMPONENTS
 # ─────────────────────────────────────────────────────────────────
 
-def render_masterhead(match_label=""):
-    IST = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(IST).strftime("%d %b %Y  ·  %H:%M:%S IST")
-    label = match_label or "LIVE FEED ACTIVE"
+def render_header(sc, is_live):
+    IST  = pytz.timezone('Asia/Kolkata')
+    now  = datetime.now(IST).strftime("%d %b %Y · %H:%M IST")
+    dot  = '<span class="live-dot"></span>' if is_live else ""
     st.markdown(
-        f'<div class="mh">'
-        f'<div><div class="mh-logo">GOD\'S<span>EYE</span> v3.4&nbsp;'
-        f'<span style="font-size:11px;color:var(--td);font-weight:400">IPL MATCH CENTER</span></div>'
-        f'<div style="font-family:var(--fm);font-size:10px;color:var(--td);margin-top:4px;">'
-        f'<span class="ld"></span>{label}</div></div>'
-        f'<div class="mh-meta"><div style="color:var(--tm);margin-bottom:2px">{now}</div>'
-        f'<div>OPERATOR: <span style="color:var(--tp)">UDAY MADDILA</span></div></div>'
+        f'<div class="ctrl-bar">'
+        f'<div><div class="ctrl-logo">GOD\'S<span>EYE</span> v3.5 '
+        f'<span style="font-size:11px;color:#94A3B8;font-weight:400">IPL MATCH CENTER</span></div>'
+        f'<div style="font-size:11px;color:#94A3B8;margin-top:2px">'
+        f'{dot}{"LIVE — " if is_live else ""}{sc.get("match","")}</div></div>'
+        f'<div class="ctrl-time">{now}<br>'
+        f'<span style="color:#64748B">OPERATOR: UDAY MADDILA</span></div>'
         f'</div>',
         unsafe_allow_html=True)
 
 
-def render_press_box(sc):
-    rr     = sc.get("req_rr", 0)
-    wp     = sc.get("rcb_win_prob", 50)
-    swp    = sc.get("srh_win_prob", 50)
-    balls  = sc.get("balls_left", 0)
-    req    = sc.get("required", 0)
-    target = sc.get("target", 0)
-    phase  = sc.get("phase", "middle")
-    rcb_rr = sc.get("rcb",{}).get("rr","—")
-    srh_rr = sc.get("srh",{}).get("rr","—")
-    wp_b   = "b-red" if wp<30 else ("b-amber" if wp<50 else "b-cyan")
-    wp_lbl = "[P0 CRITICAL]" if wp<25 else ("[P1 ELEVATED]" if wp<50 else "[P2 NOMINAL]")
-    wp_c   = "var(--red)" if wp<40 else "var(--cyan)"
-    rr_c   = "var(--red)" if rr>12 else ("var(--amber)" if rr>9 else "var(--green)")
-    ph_map = {"powerplay":("POWERPLAY","ppp"),"middle":("MIDDLE","ppm"),"death":("DEATH","ppd")}
-    ph_t, ph_c = ph_map.get(phase, ("MIDDLE","ppm"))
-    c1,c2,c3,c4,c5 = st.columns(5)
-    with c1:
-        st.markdown(f'<div class="gc"><div class="badge {wp_b}">{wp_lbl}</div>'
-                    f'<div class="kl">WIN PROBABILITY</div>'
-                    f'<div class="mlg" style="color:{wp_c}">{wp}%</div>'
-                    f'<div class="ku">RCB &middot; SRH {swp}%</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="gc"><div class="badge b-amber">[P1 ELEVATED]</div>'
-                    f'<div class="kl">REQUIRED RUN RATE</div>'
-                    f'<div class="mlg" style="color:{rr_c}">{rr}</div>'
-                    f'<div class="ku">{req} runs &middot; {balls} balls</div></div>', unsafe_allow_html=True)
-    with c3:
-        st.markdown(f'<div class="gc"><div class="badge b-cyan">[INTELLIGENCE]</div>'
-                    f'<div class="kl">MATCH TARGET</div>'
-                    f'<div class="mlg">{target}</div>'
-                    f'<div class="ku">1st innings total + 1</div></div>', unsafe_allow_html=True)
-    with c4:
-        st.markdown(f'<div class="gc"><div class="badge b-cyan">[MATCH PHASE]</div>'
-                    f'<div class="kl">CURRENT PHASE</div>'
-                    f'<div style="margin-top:8px"><span class="pp {ph_c}">{ph_t}</span></div>'
-                    f'</div>', unsafe_allow_html=True)
-    with c5:
-        st.markdown(f'<div class="gc"><div class="badge b-green">[P3 NOMINAL]</div>'
-                    f'<div class="kl">CURRENT RUN RATE</div>'
-                    f'<div class="mlg">{rcb_rr}</div>'
-                    f'<div class="ku">SRH CRR: {srh_rr}</div></div>', unsafe_allow_html=True)
+def render_scoreboard(sc):
+    bat   = sc["bat"]
+    field = sc["field"]
+    two   = sc["second_innings"]
+    bwp   = sc["bat_wp"]
+    fwp   = sc["fld_wp"]
+    bc    = _c(bat["short"])
+    fc    = _c(field["short"])
+    ph    = sc["phase"]
+    ph_b  = ("badge-pp" if ph=="powerplay" else ("badge-dth" if ph=="death" else "badge-mid"))
+    ph_t  = ph.capitalize()
 
+    st.markdown('<div class="sec-hdr">📋 Scorecard</div>', unsafe_allow_html=True)
 
-def render_scorebook(sc):
-    st.markdown('<div class="sh" style="margin-top:20px">&#9672; THE SCOREBOOK</div>', unsafe_allow_html=True)
-    rcb  = sc.get("rcb",{})
-    srh  = sc.get("srh",{})
-    wp   = sc.get("rcb_win_prob",50)
-    swp  = sc.get("srh_win_prob",50)
-    req  = sc.get("required",0)
-    bl   = sc.get("balls_left",0)
-    rr   = sc.get("req_rr",0)
-    rc   = "var(--red)" if rr>10 else "var(--amber)"
-    clutch_class = "clutch-alert" if rr > 10 else ""
-
-    def _score_display(inn):
-        s = inn.get("score","—")
-        w = inn.get("wickets","—")
-        o = inn.get("overs","0.0")
-        r = inn.get("rr","0.0")
-        if s in ("—", "&mdash;", "0", "", None) or str(s) == "0":
-            score_html = '<span style="font-size:22px;color:var(--td);letter-spacing:2px">YET TO BAT</span>'
-            sub_html   = '<span style="color:var(--td)">Batting 2nd</span>'
-        else:
-            score_html = f'{s}/{w}'
-            sub_html   = f'({o} OV) &nbsp;CRR: {r}'
-        return score_html, sub_html
-
-    rcb_score, rcb_sub = _score_display(rcb)
-    srh_score, srh_sub = _score_display(srh)
-
-    if req > 0:
-        status_bar = (
-            f'<span><span style="color:var(--red);font-weight:700">RCB CHASE</span>&nbsp;&middot;&nbsp;'
-            f'Need <b style="color:var(--tp)">{req}</b> runs off <b style="color:var(--tp)">{bl}</b> balls</span>'
-            f'<span>Req RR: <b style="color:{rc}">{rr}</b></span>'
-        )
-    else:
-        status_bar = (
-            f'<span><span style="color:var(--amber);font-weight:700">1ST INNINGS LIVE</span>&nbsp;&middot;&nbsp;'
-            f'{sc.get("status","In Progress")}</span>'
-            f'<span style="color:var(--td)">RCB bat 2nd</span>'
-        )
-
+    # Match header bar
     st.markdown(
-        f'<div class="gc {clutch_class}">'
-        '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:20px">'
-        '<div style="flex:1;min-width:160px">'
-        f'<div class="tl" style="color:#D22D3D">&#9670; {rcb.get("short","RCB")}</div>'
-        f'<div class="mxl">{rcb_score}</div>'
-        f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px">{rcb_sub}</div>'
-        '</div>'
-        '<div style="flex:2;min-width:260px;padding:0 18px">'
-        '<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);text-align:center;margin-bottom:10px">WIN PROBABILITY</div>'
-        f'<div class="pr"><span style="color:#00D1FF">{rcb.get("short","RCB")}</span><span>{wp}%</span></div>'
-        f'<div class="pt"><div class="pbc" style="width:{wp}%"></div></div>'
-        f'<div class="pr" style="margin-top:10px"><span style="color:#FFB547">{srh.get("short","SRH")}</span><span>{swp}%</span></div>'
-        f'<div class="pt"><div class="pba" style="width:{swp}%"></div></div>'
-        f'<div style="text-align:center;margin-top:14px;font-family:var(--fm);font-size:10px;color:var(--td)">{sc.get("venue","&mdash;")}</div>'
-        f'<div style="text-align:center;margin-top:4px;font-family:var(--fm);font-size:11px;color:var(--tm)">{sc.get("status","LIVE")}</div>'
-        '</div>'
-        '<div style="flex:1;min-width:160px;text-align:right">'
-        f'<div class="tl" style="color:#FF822A;text-align:right">&#9670; {srh.get("short","SRH")}</div>'
-        f'<div class="mxl" style="text-align:right">{srh_score}</div>'
-        f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px;text-align:right">{srh_sub}</div>'
-        '</div></div>'
-        '<div style="margin-top:20px;padding:11px 16px;background:rgba(255,62,62,0.06);'
-        'border:1px solid rgba(255,62,62,0.2);border-radius:8px;font-family:var(--fm);'
-        'font-size:12px;color:var(--tm);display:flex;justify-content:space-between;align-items:center">'
-        + status_bar +
-        '</div></div>',
+        f'<div class="match-hdr">'
+        f'<div><div class="match-name">🏟️ {sc["venue"]}</div>'
+        f'<div class="match-venue">{sc["match"]} &nbsp;·&nbsp; <span class="match-status">{sc["status"]}</span></div></div>'
+        f'<div style="text-align:right"><span class="badge {ph_b}">{ph_t}</span>'
+        f'<div style="font-size:11px;color:#94A3B8;margin-top:4px">{"2nd Innings" if two else "1st Innings"}</div></div>'
+        f'</div>',
         unsafe_allow_html=True)
 
-def render_next_ball(sc):
-    st.markdown('<div class="sh" style="margin-top:22px">&#9672; NEXT BALL INTELLIGENCE</div>', unsafe_allow_html=True)
-    probs    = next_ball_probs(sc)
-    req_rr   = float(sc.get("req_rr", 7))
-    wp       = sc.get("rcb_win_prob", 50)
-    pressure = min(100, int(req_rr/18*100 + (50-wp)*0.6))
-    pc = "var(--red)" if pressure>70 else ("var(--amber)" if pressure>45 else "var(--green)")
-    pl = "EXTREME" if pressure>70 else ("HIGH" if pressure>45 else "MANAGEABLE")
-    ml = max(probs, key=probs.get)
-    ml_desc = {"dot":"DOT BALL — defence expected","1":"SINGLE — rotation play",
-               "2":"TWO RUNS — good running","4":"BOUNDARY incoming",
-               "6":"SIX! — maximum likely","W":"WICKET ALERT"}
-    cell_styles = {
-        "dot":("#484F58","rgba(72,79,88,0.2)"),
-        "1":  ("#7D8590","rgba(125,133,144,0.15)"),
-        "2":  ("#FFB547","rgba(255,181,71,0.15)"),
-        "4":  ("#00D1FF","rgba(0,209,255,0.15)"),
-        "6":  ("#3DFF7A","rgba(61,255,122,0.15)"),
-        "W":  ("#FF3E3E","rgba(255,62,62,0.15)"),
-    }
-    cells = '<div class="nb-grid">'
-    for lbl, pct in probs.items():
-        clr, bg = cell_styles[lbl]
-        cells += (f'<div class="nb-cell" style="color:{clr};background:{bg};border-color:{clr}40">'
-                  f'<div style="font-size:18px;font-weight:700">{lbl}</div>'
-                  f'<div style="font-size:10px;margin-top:4px;color:var(--tm)">{pct}%</div></div>')
-    cells += '</div>'
-    ca, cb = st.columns([3,2], gap="medium")
-    with ca:
+    # Scores — batting team LEFT, fielding/yet-to-bat RIGHT
+    c1, c2, c3 = st.columns([5, 4, 5])
+
+    # LEFT — Batting team (currently batting)
+    with c1:
+        bat_score = f'{bat["score"]}/{bat["wickets"]}' if bat["score"] not in ("—","0","") else "Yet to Bat"
+        bat_sub   = f'{bat["overs"]} Ov  ·  CRR: {bat["rr"]}' if bat["score"] not in ("—","0","") else "Batting 2nd"
         st.markdown(
-            f'<div class="gc gc-cyan"><div class="kl">NEXT BALL — OUTCOME PROBABILITIES</div>'
-            + cells +
-            f'<div style="margin-top:14px;font-family:var(--fm);font-size:11px;color:var(--tm)">'
-            f'&#9654; Most likely: <b style="color:var(--cyan)">{ml_desc[ml]}</b></div></div>',
-            unsafe_allow_html=True)
-    with cb:
-        wkts_left = 10 - _int(sc.get("rcb",{}).get("wickets","0") or 0)
-        st.markdown(
-            f'<div class="gc gc-red" style="height:100%">'
-            f'<div class="kl">BATTING PRESSURE INDEX</div>'
-            f'<div style="font-family:var(--fm);font-size:42px;font-weight:700;color:{pc};line-height:1">{pressure}</div>'
-            f'<div style="font-family:var(--fm);font-size:11px;color:{pc};letter-spacing:2px;margin-top:4px">{pl}</div>'
-            f'<div class="pt" style="margin-top:16px"><div class="mf" style="width:{pressure}%;background:{pc}"></div></div>'
-            f'<div style="margin-top:18px;font-family:var(--fm);font-size:11px;color:var(--tm);line-height:1.7">'
-            f'Req RR: <b style="color:var(--tp)">{sc.get("req_rr","&mdash;")}</b><br>'
-            f'Balls left: <b style="color:var(--tp)">{sc.get("balls_left","&mdash;")}</b><br>'
-            f'Wickets left: <b style="color:var(--tp)">{wkts_left}</b></div></div>',
-            unsafe_allow_html=True)
+            f'<div class="card">'
+            f'<div class="team-label" style="color:{bc}">▶ {bat["short"]} (Batting)</div>'
+            f'<div class="score-big" style="color:{bc}">{bat_score}</div>'
+            f'<div class="score-sub">{bat_sub}</div>'
+            f'</div>', unsafe_allow_html=True)
 
-
-def render_batter_predictor(batters):
-    st.markdown('<div class="sh" style="margin-top:22px">&#9672; BATTER MILESTONE PREDICTOR</div>', unsafe_allow_html=True)
-    ca, cb = st.columns(2, gap="medium")
-    for col, team in [(ca,"RCB"),(cb,"SRH")]:
-        with col:
-            tb  = [b for b in batters if b["team"]==team]
-            tc  = "#D22D3D" if team=="RCB" else "#FF822A"
-            html= f'<div class="gc" style="border-left:3px solid {tc}">'
-            html+= f'<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);margin-bottom:12px">{team} BATTERS</div>'
-            for b in tb:
-                p50c = "var(--green)" if b["p50"]>75 else ("var(--amber)" if b["p50"]>40 else "var(--red)")
-                p30c = "var(--green)" if b["p30"]>75 else ("var(--amber)" if b["p30"]>40 else "var(--red)")
-                fc   = "var(--green)" if b["form"]>80 else ("var(--amber)" if b["form"]>60 else "var(--red)")
-                html += (
-                    f'<div class="pl-row">'
-                    f'<div><div class="pl-n">{b["name"]}</div>'
-                    f'<div class="pl-r">{b["runs"]}r ({b["balls"]}b) SR:{b["sr"]} &nbsp;4s:{b["4s"]} 6s:{b["6s"]}</div></div>'
-                    f'<div style="text-align:right;min-width:150px">'
-                    f'<div style="font-family:var(--fm);font-size:9px;color:var(--td)">HIT 50</div>'
-                    f'<div class="mt"><div class="mf" style="width:{b["p50"]}%;background:{p50c}"></div></div>'
-                    f'<div style="font-family:var(--fm);font-size:10px;color:{p50c}">{b["p50"]}%</div>'
-                    f'<div style="font-family:var(--fm);font-size:9px;color:var(--td);margin-top:4px">HIT 30</div>'
-                    f'<div class="mt"><div class="mf" style="width:{b["p30"]}%;background:{p30c}"></div></div>'
-                    f'<div style="font-family:var(--fm);font-size:10px;color:{p30c}">{b["p30"]}%</div>'
-                    f'<div style="font-family:var(--fm);font-size:9px;color:var(--td);margin-top:4px">FORM</div>'
-                    f'<div class="mt"><div class="mf" style="width:{b["form"]}%;background:{fc}"></div></div>'
-                    f'<div style="font-family:var(--fm);font-size:10px;color:{fc}">{b["form"]}/100</div>'
-                    f'</div></div>'
-                )
-            html += '</div>'
-            st.markdown(html, unsafe_allow_html=True)
-
-
-def render_bowler_intel(bowlers):
-    st.markdown('<div class="sh" style="margin-top:22px">&#9672; BOWLING INTELLIGENCE</div>', unsafe_allow_html=True)
-    ca, cb = st.columns([3,2], gap="medium")
-    with ca:
-        html = ('<div class="gc gc-purple">'
-                '<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);margin-bottom:12px">BOWLER ANALYTICS TABLE</div>'
-                '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1.2fr;gap:4px;'
-                'font-family:var(--fm);font-size:9px;color:var(--td);letter-spacing:1px;'
-                'border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:4px">'
-                '<div>BOWLER</div><div style="text-align:center">OVRS</div>'
-                '<div style="text-align:center">WKTS</div><div style="text-align:center">ECON</div>'
-                '<div style="text-align:center">DOT%</div><div style="text-align:center">THREAT</div>'
-                '</div>')
-        for b in bowlers:
-            ec   = b["econ"]
-            ec_c = "var(--green)" if ec<7 else ("var(--amber)" if ec<10 else "var(--red)")
-            th_c = "var(--red)" if b["threat"]>80 else ("var(--amber)" if b["threat"]>55 else "var(--green)")
-            t_c  = "#00D1FF" if b["team"]=="RCB" else "#FFB547"
-            html += (
-                f'<div class="pl-row" style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1.2fr;gap:4px">'
-                f'<div><div class="pl-n">{b["name"]}</div><div class="pl-r" style="color:{t_c}">{b["team"]}</div></div>'
-                f'<div style="text-align:center;font-family:var(--fm);font-size:12px;color:var(--tp);align-self:center">{b["overs"]}</div>'
-                f'<div style="text-align:center;font-family:var(--fm);font-size:12px;color:var(--tp);align-self:center">{b["wkts"]}</div>'
-                f'<div style="text-align:center;font-family:var(--fm);font-size:12px;color:{ec_c};align-self:center">{ec}</div>'
-                f'<div style="text-align:center;font-family:var(--fm);font-size:12px;color:var(--tp);align-self:center">{b["dot"]}%</div>'
-                f'<div style="text-align:center;align-self:center">'
-                f'<span style="font-family:var(--fm);font-size:12px;color:{th_c};font-weight:700">{b["threat"]}</span>'
-                f'<div class="mt" style="width:60px;margin:3px auto 0"><div class="mf" style="width:{b["threat"]}%;background:{th_c}"></div></div>'
+    # MIDDLE — Win probability + target
+    with c2:
+        if two:
+            rn = sc["required"]; bl = sc["balls_left"]; rr = sc["req_rr"]
+            rc = "#DC2626" if rr>12 else ("#D97706" if rr>9 else "#16A34A")
+            mid_html = (
+                f'<div class="card" style="text-align:center">'
+                f'<div class="stat-lbl">Win Probability</div>'
+                f'<div style="margin:10px 0">'
+                f'<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;margin-bottom:4px">'
+                f'<span style="color:{bc}">{bat["short"]}</span><span style="color:{bc}">{bwp}%</span></div>'
+                f'<div class="pbar-wrap"><div class="pbar-fill" style="width:{bwp}%;background:{bc}"></div></div>'
+                f'<div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;margin-top:8px;margin-bottom:4px">'
+                f'<span style="color:{fc}">{field["short"]}</span><span style="color:{fc}">{fwp}%</span></div>'
+                f'<div class="pbar-wrap"><div class="pbar-fill" style="width:{fwp}%;background:{fc}"></div></div>'
+                f'</div>'
+                f'<div style="margin-top:10px;padding:8px;background:#FEF2F2;border-radius:6px;font-size:12px">'
+                f'Need <b style="color:{rc}">{rn}</b> off <b>{bl}</b> balls &nbsp;·&nbsp; Req RR: <b style="color:{rc}">{rr}</b>'
                 f'</div></div>'
             )
-        html += '</div>'
-        st.markdown(html, unsafe_allow_html=True)
-    with cb:
-        srh_bowlers = [b for b in bowlers if b["team"]=="SRH"]
-        radar_team  = "SRH" if srh_bowlers else (bowlers[0]["team"] if bowlers else "SRH")
-        st.plotly_chart(chart_bowler_radar(bowlers, radar_team), width="stretch", config={"displayModeBar":False})
-
-
-def render_momentum_matrix(sc):
-    st.markdown('<div class="sh" style="margin-top:22px">&#9672; MOMENTUM MATRIX</div>', unsafe_allow_html=True)
-    ov, wp, rr, req = demo_momentum()
-    hist  = demo_history()
-    parts = demo_partnerships()
-    bats  = demo_batters()
-    c1, c2 = st.columns([3,2], gap="medium")
-    with c1:
-        st.plotly_chart(chart_momentum(ov,wp,rr,req), width="stretch", config={"displayModeBar":False})
-    with c2:
-        st.plotly_chart(chart_wagon(), width="stretch", config={"displayModeBar":False})
-    c3, c4 = st.columns([3,2], gap="medium")
-    with c3:
-        st.plotly_chart(chart_run_progression(hist), width="stretch", config={"displayModeBar":False})
-    with c4:
-        st.plotly_chart(chart_partnership(parts), width="stretch", config={"displayModeBar":False})
-        st.plotly_chart(chart_batter_compare(bats), width="stretch", config={"displayModeBar":False})
-
-
-def render_intel_row(news):
-    st.markdown('<div class="sh" style="margin-top:22px">&#9672; LIVE INTELLIGENCE FEED</div>', unsafe_allow_html=True)
-    ca, cb = st.columns([1,2], gap="medium")
-    with ca:
-        st.markdown(
-            '<div class="gc gc-cyan">'
-            '<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);margin-bottom:12px">KEY METRICS</div>'
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
-            '<div><div class="kl">TOP SCORER</div><div style="font-family:var(--fm);font-size:14px;font-weight:700;color:var(--tp)">V. Kohli</div><div class="ku">72 (48)</div></div>'
-            '<div><div class="kl">BEST BOWLER</div><div style="font-family:var(--fm);font-size:14px;font-weight:700;color:var(--tp)">P. Cummins</div><div class="ku">3/24 (4 OV)</div></div>'
-            '<div><div class="kl">6s/4s (RCB)</div><div style="font-family:var(--fm);font-size:14px;font-weight:700;color:var(--cyan)">8 / 14</div><div class="ku">boundary count</div></div>'
-            '<div><div class="kl">EXTRAS</div><div style="font-family:var(--fm);font-size:14px;font-weight:700;color:var(--amber)">11</div><div class="ku">Wides:6 NB:2</div></div>'
-            '<div><div class="kl">POWERPLAY RR</div><div style="font-family:var(--fm);font-size:14px;font-weight:700;color:var(--green)">9.67</div><div class="ku">Overs 1&ndash;6</div></div>'
-            '<div><div class="kl">DLS PAR</div><div style="font-family:var(--fm);font-size:14px;font-weight:700;color:var(--tp)">148</div><div class="ku">at current over</div></div>'
-            '</div></div>',
-            unsafe_allow_html=True)
-    with cb:
-        html = ('<div class="gc"><div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);margin-bottom:12px">PRESS BOX INTEL (CLICK HEADLINES)</div>')
-        if news:
-            for item in news[:6]:
-                html += f'<div class="ni"><div><a href="{item["link"]}" target="_blank" style="color:var(--tp);">{item["title"]}</a></div><div class="ni-s">{item.get("source","&mdash;")} &middot; {item.get("published","")[:22]}</div></div>'
         else:
-            html += '<div class="ni" style="color:var(--td)">News feed unavailable.</div>'
-        html += '</div>'
-        st.markdown(html, unsafe_allow_html=True)
+            r = bat["_r"]; o = bat["_o"]
+            proj = bat["_r"] + round(_float(bat["rr"]) * max(0, (120 - int(o)*6 - round((o%1)*10))) / 6)
+            mid_html = (
+                f'<div class="card" style="text-align:center">'
+                f'<div class="stat-lbl">1st Innings Progress</div>'
+                f'<div style="margin:10px 0">'
+                f'<div class="pbar-wrap"><div class="pbar-fill" style="width:{min(100,int(o/20*100))}%;background:{bc}"></div></div>'
+                f'<div style="font-size:11px;color:#64748B;margin-top:4px">{o} / 20.0 Overs</div>'
+                f'</div>'
+                f'<div style="margin-top:10px;padding:8px;background:#F0FDF4;border-radius:6px;font-size:12px">'
+                f'CRR: <b style="color:#16A34A">{bat["rr"]}</b> &nbsp;·&nbsp; Projected: <b>~{proj}</b>'
+                f'</div></div>'
+            )
+        st.markdown(mid_html, unsafe_allow_html=True)
+
+    # RIGHT — Fielding/yet-to-bat team
+    with c3:
+        if field["score"] in ("—","") or not two:
+            fld_score = f'{field["score"]}/{field["wickets"]}' if field["score"] not in ("—","") else "Yet to Bat"
+            fld_sub   = f'{field["overs"]} Ov  ·  CRR: {field["rr"]}' if field["score"] not in ("—","") else "Bats next"
+        else:
+            fld_score = f'{field["score"]}/{field["wickets"]}'
+            fld_sub   = f'{field["overs"]} Ov  ·  CRR: {field["rr"]}'
+        fld_label = f'{"Bowled — " if two else "Bats Next — "}{field["short"]}'
+        st.markdown(
+            f'<div class="card">'
+            f'<div class="team-label" style="color:{fc}">⚡ {fld_label}</div>'
+            f'<div class="score-big" style="color:{fc}">{fld_score}</div>'
+            f'<div class="score-sub">{fld_sub}</div>'
+            f'</div>', unsafe_allow_html=True)
 
 
-def render_neural_verdict(sc, batters, bowlers):
-    wp    = sc.get("rcb_win_prob", 38)
-    rr    = sc.get("req_rr", 6.86)
-    phase = sc.get("phase", "death")
-    bl    = sc.get("balls_left", 27)
-    req   = sc.get("required", 46)
-    arc_r = [b for b in batters if b["team"]=="RCB"]
-    arc_s = [b for b in bowlers if b["team"]=="SRH"]
-    top_bat = max(arc_r, key=lambda b:b["p50"]) if arc_r else None
-    top_bwl = max(arc_s, key=lambda b:b["threat"]) if arc_s else None
-    eco_k   = min(arc_s, key=lambda b:b["econ"])   if arc_s else None
-    if wp>=60:
-        sent,sc2="#00D1FF","STRONGLY FAVOURS RCB"
-        body = (f"Neural pattern analysis indicates a high-confidence RCB chase. With {req} required off "
-                f"{bl} balls (req RR {rr}), the model assigns {wp}% to RCB. "
-                f"Historical Chinnaswamy data shows 71% conversion from this position.")
-    elif wp>=45:
-        sent,sc2="#FFB547","CONTESTED — MARGINAL EDGE RCB"
-        body = (f"Delicately balanced. RCB hold a {wp}% edge, but req rate of {rr} demands "
-                f"calculated aggression in the {phase} phase. Batting depth is the decisive variable.")
+def render_key_stats(sc, batters, bowlers):
+    st.markdown('<div class="sec-hdr">📊 Key Match Stats</div>', unsafe_allow_html=True)
+    bat = sc["bat"]; two = sc["second_innings"]
+    wl  = 10 - bat["_w"]
+    ph  = sc["phase"]
+    ph_b= ("badge-pp" if ph=="powerplay" else ("badge-dth" if ph=="death" else "badge-mid"))
+
+    # Current top scorer from live batters
+    live_bat  = [b for b in batters if b.get("status","batting").lower() in ("batting","not out","")]
+    top_scorer= max(batters, key=lambda x:x["runs"]) if batters else None
+    top_bowler= max(bowlers, key=lambda x:x["wkts"]) if bowlers else None
+
+    c1,c2,c3,c4,c5 = st.columns(5)
+    def _card(col, lbl, val, sub, color="#1E293B", top_border="#2563EB"):
+        with col:
+            st.markdown(
+                f'<div class="card" style="border-top:3px solid {top_border}">'
+                f'<div class="stat-lbl">{lbl}</div>'
+                f'<div class="stat-val" style="color:{color}">{val}</div>'
+                f'<div class="stat-sub">{sub}</div></div>',
+                unsafe_allow_html=True)
+
+    _card(c1, "Current RR", bat["rr"],
+          f'{bat["short"]} batting · {bat["overs"]} ov',
+          "#16A34A" if _float(bat["rr"])>=8 else "#DC2626", "#16A34A")
+
+    if two:
+        rr = sc["req_rr"]
+        col = "#DC2626" if rr>12 else ("#D97706" if rr>9 else "#16A34A")
+        _card(c2, "Required RR", str(rr),
+              f'{sc["required"]} runs · {sc["balls_left"]} balls', col, col)
     else:
-        sent,sc2="#FF3E3E","STRONGLY FAVOURS SRH"
-        body = (f"High-pressure scenario for RCB. Required rate {rr} over {bl} balls achieved only "
-                f"24% of the time at this venue in {phase} overs. SRH bowling depth adds significant variance.")
-    conf    = min(99, int(abs(wp-50)*2+50))
-    IST     = pytz.timezone('Asia/Kolkata')
-    now_str = datetime.now(IST).strftime("%H:%M:%S IST")
-    html = (
-        f'<div class="vd"><div class="vd-h">&#9672; 3RD UMPIRE AI &mdash; NEURAL PATTERN ANALYSIS &nbsp;&middot;&nbsp;'
-        f'<span style="color:var(--td)">CONFIDENCE: <b style="color:{sc2}">{conf}%</b></span></div>'
-        f'<div style="font-family:var(--fm);font-size:12px;font-weight:700;color:{sc2};letter-spacing:2px;margin-bottom:10px">VERDICT &mdash; {sent}</div>'
-        f'<div style="font-size:14px;color:var(--tp);line-height:1.7">{body}</div>'
-    )
-    if top_bat:
-        html += (f'<div class="pb1" style="margin-top:16px">'
-                 f'<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--cyan);margin-bottom:6px">&#9650; KEY BATTER TO WATCH</div>'
-                 f'<b style="color:var(--tp)">{top_bat["name"]}</b> &mdash; '
-                 f'{top_bat["runs"]}r ({top_bat["balls"]}b) SR:{top_bat["sr"]} &middot; '
-                 f'50-prob: <b style="color:var(--green)">{top_bat["p50"]}%</b> &middot; '
-                 f'30-prob: <b style="color:var(--green)">{top_bat["p30"]}%</b>. '
-                 f'Form: {top_bat["form"]}/100. Prime finisher candidate.</div>')
-    if top_bwl:
-        html += (f'<div class="pb2" style="margin-top:6px">'
-                 f'<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--red);margin-bottom:6px">&#9654; MOST DANGEROUS BOWLER</div>'
-                 f'<b style="color:var(--tp)">{top_bwl["name"]}</b> (SRH) &mdash; '
-                 f'{top_bwl["wkts"]} wkts &middot; Econ {top_bwl["econ"]} &middot; '
-                 f'Dot%: <b style="color:var(--amber)">{top_bwl["dot"]}%</b> &middot; '
-                 f'Threat: <b style="color:var(--red)">{top_bwl["threat"]}/100</b>. '
-                 f'High wicket-taking probability in {phase} overs.</div>')
-    if eco_k:
-        html += (f'<div class="pb3" style="margin-top:6px">'
-                 f'<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--amber);margin-bottom:6px">&#9651; ECONOMY MASTER</div>'
-                 f'<b style="color:var(--tp)">{eco_k["name"]}</b> &mdash; '
-                 f'Economy: <b style="color:var(--green)">{eco_k["econ"]}</b> &middot; '
-                 f'Dot%: {eco_k["dot"]}% &middot; Giving fewest runs/over. '
-                 f'RCB must target the other end to keep the chase viable.</div>')
-    html += (f'<div style="margin-top:14px;font-family:var(--fm);font-size:10px;color:var(--td);'
-             f'border-top:1px solid var(--border);padding-top:10px">'
-             f'MODEL: GOD\'S EYE v3.4 &middot; RapidAPI / Google News RSS &middot; '
-             f'SYNC: {now_str} &middot; OPERATOR: UDAY MADDILA</div></div>')
+        _card(c2, "Wickets Left", str(wl),
+              f'{bat["wickets"]} fallen · {ph} overs', "#1E293B", "#7C3AED")
+
+    _card(c3, "Match Phase", ph.capitalize(),
+          f'Over {bat["_o"]} of 20', "#1E293B", "#7C3AED")
+
+    if top_scorer:
+        _card(c4, "Top Scorer", f'{top_scorer["runs"]}* ({top_scorer["balls"]}b)',
+              f'{top_scorer["name"]} · SR: {top_scorer["sr"]}', "#1D4ED8", "#1D4ED8")
+    else:
+        _card(c4, "Top Scorer", "—", "Awaiting data", "#94A3B8", "#94A3B8")
+
+    if top_bowler:
+        ec = top_bowler["econ"]
+        ec_c = "#16A34A" if ec<8 else ("#D97706" if ec<11 else "#DC2626")
+        _card(c5, "Best Bowler", f'{top_bowler["wkts"]}/{top_bowler["runs"]}',
+              f'{top_bowler["name"]} · {top_bowler["overs"]} ov · Econ {ec}', ec_c, ec_c)
+    else:
+        _card(c5, "Best Bowler", "—", "Awaiting data", "#94A3B8", "#94A3B8")
+
+
+def render_prediction(sc):
+    st.markdown('<div class="sec-hdr">🔮 Live Match Prediction</div>', unsafe_allow_html=True)
+    verdict, clr, txt = predict(sc)
+    bwp = sc["bat_wp"]; fwp = sc["fld_wp"]
+    bat = sc["bat"]; field = sc["field"]
+    bc  = _c(bat["short"]); fc = _c(field["short"])
+
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown(
+            f'<div class="predict-box {clr if clr != "green" else ""}">'
+            f'<div style="font-size:15px;font-weight:700;color:#1E293B;margin-bottom:8px">{verdict}</div>'
+            f'<div style="font-size:13px;color:#374151;line-height:1.7">{txt}</div>'
+            f'</div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(
+            f'<div class="card">'
+            f'<div class="stat-lbl">Win Probability Model</div>'
+            f'<div style="margin-top:10px">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+            f'<span style="font-weight:700;color:{bc};font-size:14px">{bat["short"]}</span>'
+            f'<span style="font-size:20px;font-weight:700;color:{bc}">{bwp}%</span></div>'
+            f'<div class="pbar-wrap" style="height:12px"><div class="pbar-fill" style="width:{bwp}%;background:{bc}"></div></div>'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;margin-bottom:6px">'
+            f'<span style="font-weight:700;color:{fc};font-size:14px">{field["short"]}</span>'
+            f'<span style="font-size:20px;font-weight:700;color:{fc}">{fwp}%</span></div>'
+            f'<div class="pbar-wrap" style="height:12px"><div class="pbar-fill" style="width:{fwp}%;background:{fc}"></div></div>'
+            f'</div></div>', unsafe_allow_html=True)
+
+
+def render_batters(batters, sc):
+    st.markdown('<div class="sec-hdr">🏏 Batting Scorecard (Current Innings)</div>', unsafe_allow_html=True)
+    if not batters:
+        st.info("Live batting data loading... (scorecard API enriching)")
+        return
+    bat_team = sc["bat"]["short"]
+    tc = _c(bat_team)
+    hdr = ('<div class="bat-row row-hdr">'
+           '<div>Batter</div><div style="text-align:right">R</div>'
+           '<div style="text-align:right">B</div><div style="text-align:right">4s</div>'
+           '<div style="text-align:right">6s</div><div style="text-align:right">SR</div></div>')
+    rows = ""
+    for b in batters:
+        out = b.get("status","")
+        is_bat = "batting" in out.lower() or out in ("","not out")
+        name_style = f'font-weight:700;color:{tc}' if is_bat else 'color:#374151'
+        sr_c = "good" if b["sr"]>=150 else ("warn" if b["sr"]>=100 else "bad")
+        rows += (f'<div class="bat-row">'
+                 f'<div><span style="{name_style}">{b["name"]}</span>'
+                 f'{"&nbsp;🟢" if is_bat else ""}'
+                 f'<div style="font-size:10px;color:#94A3B8">{out[:40] if not is_bat else "not out"}</div></div>'
+                 f'<div class="num-cell"><b>{b["runs"]}</b></div>'
+                 f'<div class="num-cell">{b["balls"]}</div>'
+                 f'<div class="num-cell">{b["4s"]}</div>'
+                 f'<div class="num-cell">{b["6s"]}</div>'
+                 f'<div class="num-cell"><span class="{sr_c}">{b["sr"]}</span></div>'
+                 f'</div>')
+    st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
+
+
+def render_bowlers(bowlers, sc):
+    st.markdown('<div class="sec-hdr">🎯 Bowling Figures (Current Innings)</div>', unsafe_allow_html=True)
+    if not bowlers:
+        st.info("Live bowling data loading... (scorecard API enriching)")
+        return
+    bowl_team = sc["field"]["short"]
+    tc = _c(bowl_team)
+    hdr = ('<div class="bowl-row row-hdr">'
+           '<div>Bowler</div><div style="text-align:right">O</div>'
+           '<div style="text-align:right">R</div><div style="text-align:right">W</div>'
+           '<div style="text-align:right">M</div><div style="text-align:right">Econ</div></div>')
+    rows = ""
+    # Sort by overs bowled descending
+    for b in sorted(bowlers, key=lambda x: -x["overs"]):
+        ec = b["econ"]
+        ec_c = "good" if ec<8 else ("warn" if ec<11 else "bad")
+        wkt_style = 'style="color:#DC2626;font-weight:700"' if b["wkts"]>0 else ""
+        rows += (f'<div class="bowl-row">'
+                 f'<div><span style="font-weight:600;color:{tc}">{b["name"]}</span></div>'
+                 f'<div class="num-cell">{b["overs"]}</div>'
+                 f'<div class="num-cell">{b["runs"]}</div>'
+                 f'<div class="num-cell"><span {wkt_style}>{b["wkts"]}</span></div>'
+                 f'<div class="num-cell">{b["maidens"]}</div>'
+                 f'<div class="num-cell"><span class="{ec_c}">{ec}</span></div>'
+                 f'</div>')
+    st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
+
+
+def render_news(news):
+    st.markdown('<div class="sec-hdr">📰 IPL 2026 News Feed</div>', unsafe_allow_html=True)
+    if not news:
+        st.info("News feed unavailable.")
+        return
+    html = '<div class="card">'
+    for n in news:
+        html += (f'<div class="news-item">'
+                 f'<a href="{n["link"]}" target="_blank">{n["title"]}</a>'
+                 f'<div class="news-src">{n["source"]} · {n["published"]}</div>'
+                 f'</div>')
+    html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────
-# 8. SIDEBAR
+# 7. CONTROLS
 # ─────────────────────────────────────────────────────────────────
-_c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
+_c1, _c2, _c3, _c4, _c5 = st.columns([3,1,1,1,1])
 with _c1:
     st.markdown(
-        '<div style="font-family:var(--fm);font-size:10px;color:#484F58;padding-top:6px">'
-        "GOD'S EYE v3.4 &middot; IPL Match Center &middot; &#169; Uday Maddila</div>",
-        unsafe_allow_html=True,
-    )
-with _c2:
-    auto_refresh = st.toggle("Auto-Refresh", value=True)
-with _c3:
-    show_demo    = st.toggle("Demo Mode",    value=False)
-with _c4:
-    debug_mode   = st.toggle("Debug API",   value=False)
+        '<div style="font-size:11px;color:#94A3B8;padding-top:10px">'
+        "GOD'S EYE v3.5 · IPL Match Center · © Uday Maddila</div>",
+        unsafe_allow_html=True)
+with _c2: auto_refresh = st.toggle("Auto-Refresh", value=True)
+with _c3: show_demo    = st.toggle("Demo Mode",    value=False)
+with _c4: debug_mode   = st.toggle("Debug API",    value=False)
 with _c5:
-    manual_refresh = st.button("🔄 Refresh Now", use_container_width=True)
-if manual_refresh:
-    st.cache_data.clear()
-    st.rerun()
-
+    if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 # ─────────────────────────────────────────────────────────────────
-# 9. MAIN RENDER LOOP
+# 8. MAIN
 # ─────────────────────────────────────────────────────────────────
 sc      = None
 batters = []
 bowlers = []
+is_live = False
 
 if not show_demo:
-    with st.spinner("Synchronizing with Live Match Feed..."):
-        sc, batters, bowlers = resolve_live_match(debug=debug_mode)
-if sc is None:
-    st.info("📡 No live IPL match found right now. Displaying pre-match demo metrics.")
-    sc = demo_sc()
+    with st.spinner("Fetching live IPL data..."):
+        sc, batters, bowlers = resolve_live(debug=debug_mode)
+        is_live = sc is not None
 
-if not batters:
-    batters = demo_batters()
-if not bowlers:
-    bowlers = demo_bowlers()
+if sc is None:
+    st.info("📡 No live IPL match right now — showing demo data.")
+    sc      = _demo_sc()
+    batters = _demo_bat()
+    bowlers = _demo_bowl()
 
 news = fetch_news()
 
-render_masterhead(sc.get("match", "LIVE FEED ACTIVE"))
-render_press_box(sc)
-render_scorebook(sc)
-render_next_ball(sc)
-render_batter_predictor(batters)
-render_bowler_intel(bowlers)
-render_momentum_matrix(sc)
-render_intel_row(news)
-render_neural_verdict(sc, batters, bowlers)
+# ─── RENDER ────────────────────────────────────────────────────
+render_header(sc, is_live)
+render_scoreboard(sc)
+
+st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+render_key_stats(sc, batters, bowlers)
+
+st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+render_prediction(sc)
+
+st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+col_bat, col_bowl = st.columns(2, gap="medium")
+with col_bat:  render_batters(batters, sc)
+with col_bowl: render_bowlers(bowlers, sc)
+
+st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+render_news(news)
+
+st.markdown(
+    f'<div style="text-align:center;font-size:11px;color:#94A3B8;margin-top:20px;padding-top:16px;border-top:1px solid #E2E8F0">'
+    f'GOD\'S EYE v3.5 · Data: Cricbuzz via RapidAPI · News: Google News RSS · '
+    f'Auto-refreshes every {REFRESH_SECS}s · © Uday Maddila</div>',
+    unsafe_allow_html=True)
 
 if auto_refresh:
     time.sleep(REFRESH_SECS)
