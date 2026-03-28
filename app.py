@@ -220,12 +220,19 @@ def next_ball(sc):
 
 # ── DATA LAYER ────────────────────────────────────────────────────────────────
 def _fetch_list():
+    """Returns (data, status_code). status=429/403 means quota hit."""
     try:
         r = requests.get(f"https://{RAPIDAPI_HOST}/matches/v1/live",
                          headers=API_HEADERS, timeout=8)
-        if r.status_code == 200: return r.json()
+        if r.status_code == 200: return r.json(), 200
+        return None, r.status_code
     except: pass
-    return None
+    return None, 0
+
+def _fetch_list_data():
+    """Compatibility wrapper — returns just data."""
+    data, _ = _fetch_list()
+    return data
 
 @st.cache_data(ttl=10, show_spinner=False)
 def _fetch_scard(mid):
@@ -383,10 +390,12 @@ def _parse_scard(raw, sc):
 
 
 def resolve_live(debug=False):
-    raw = _fetch_list()
+    raw, status = _fetch_list()
     if debug and raw:
         with st.expander("🔍 RAW — Match List", expanded=True): st.json(raw)
-    if not raw: return None, [], [], {}, {}
+    if status in (429, 403):
+        return None, [], [], {}, {}, status   # quota hit — caller handles
+    if not raw: return None, [], [], {}, {}, status
 
     for m in _parse_list(raw):
         sn  = m["seriesName"].upper()
@@ -405,9 +414,9 @@ def resolve_live(debug=False):
         if rscard:
             bat, bowl, extras, partner = _parse_scard(rscard, sc)
 
-        return sc, bat, bowl, extras, partner
+        return sc, bat, bowl, extras, partner, 200
 
-    return None, [], [], {}, {}
+    return None, [], [], {}, {}, 0
 
 
 # ── DEMO DATA ─────────────────────────────────────────────────────────────────
@@ -828,55 +837,60 @@ with ce:
         st.cache_data.clear(); st.rerun()
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-# Rate-limit guard: only hit API every API_INTERVAL seconds
-# UI reruns every REFRESH_SECS for responsiveness, but API is called sparingly
-API_INTERVAL = 15  # seconds between actual API calls
+API_INTERVAL = 30   # seconds between API calls (~2880/day — fine for free tier)
+REFRESH_SECS = 15   # UI rerun interval
 
 _now = time.time()
-if "last_fetch" not in st.session_state:
-    st.session_state.last_fetch   = 0
-    st.session_state.cached_sc    = None
-    st.session_state.cached_bat   = []
-    st.session_state.cached_bowl  = []
-    st.session_state.cached_ext   = {}
-    st.session_state.cached_part  = {}
+
+# Init session state
+for _k, _v in [("last_fetch",0),("cached_sc",None),("cached_bat",[]),
+               ("cached_bowl",[]),("cached_ext",{}),("cached_part",{}),
+               ("quota_hit",False),("api_status",200)]:
+    if _k not in st.session_state: st.session_state[_k] = _v
 
 sc=None; batters=[]; bowlers=[]; extras={}; partner={}; is_live=False
+_api_msg = ""
 
 if not demo_mode:
-    due = (_now - st.session_state.last_fetch) >= API_INTERVAL
-    if due:
-        with st.spinner(""):
-            sc,batters,bowlers,extras,partner = resolve_live(debug=debug_api)
-        if sc is not None:
-            st.session_state.cached_sc   = sc
-            st.session_state.cached_bat  = batters
-            st.session_state.cached_bowl = bowlers
-            st.session_state.cached_ext  = extras
-            st.session_state.cached_part = partner
+    _due = (_now - st.session_state.last_fetch) >= API_INTERVAL
+
+    if _due:
+        _fresh_sc, _b, _bw, _ex, _pt, _code = resolve_live(debug=debug_api)
+        st.session_state.api_status = _code
+
+        if _code in (429, 403):
+            # Quota hit — back off for 5 minutes, keep showing cached data
+            st.session_state.quota_hit  = True
+            st.session_state.last_fetch = _now + 270  # skip 4.5 min before retry
+            _api_msg = "⚠️ API quota reached — showing last known live data"
+        elif _fresh_sc is not None:
+            st.session_state.cached_sc   = _fresh_sc
+            st.session_state.cached_bat  = _b
+            st.session_state.cached_bowl = _bw
+            st.session_state.cached_ext  = _ex
+            st.session_state.cached_part = _pt
             st.session_state.last_fetch  = _now
-        elif st.session_state.cached_sc is not None:
-            # Keep showing last good data even if this call failed
-            sc      = st.session_state.cached_sc
-            batters = st.session_state.cached_bat
-            bowlers = st.session_state.cached_bowl
-            extras  = st.session_state.cached_ext
-            partner = st.session_state.cached_part
-            is_live = True
-    else:
-        # Not due yet — use cached data from session state
+            st.session_state.quota_hit   = False
+        else:
+            # API returned 200 but no IPL match — update timestamp
+            st.session_state.last_fetch  = _now
+            st.session_state.quota_hit   = False
+
+    # Always serve cached data if available (regardless of whether due)
+    if st.session_state.cached_sc is not None:
         sc      = st.session_state.cached_sc
         batters = st.session_state.cached_bat
         bowlers = st.session_state.cached_bowl
         extras  = st.session_state.cached_ext
         partner = st.session_state.cached_part
-        is_live = sc is not None
-
-    if sc is not None:
         is_live = True
 
-if sc is None:
+if _api_msg:
+    st.warning(_api_msg)
+elif sc is None and not demo_mode:
     st.info("📡 No live IPL match right now — showing demo data.")
+
+if sc is None:
     sc,batters,bowlers,extras,partner = _demo()
 
 next_fetch_in = max(0, int(API_INTERVAL - (_now - st.session_state.last_fetch)))
@@ -899,7 +913,9 @@ st.markdown(
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
     f'GOD\'S EYE v3.5 · Data: Cricbuzz API (RapidAPI) · '
     f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
-    f'Next API call in: {next_fetch_in}s · © Uday Maddila</div>',
+    f'Next refresh in: {next_fetch_in}s'
+    + (' · ⚠️ Quota hit' if st.session_state.get("quota_hit") else '') +
+    f' · © Uday Maddila</div>',
     unsafe_allow_html=True)
 
 if auto_ref:
