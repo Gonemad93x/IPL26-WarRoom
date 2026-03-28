@@ -17,7 +17,7 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
 RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"
 API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
-REFRESH_SECS  = 15
+REFRESH_SECS  = 10
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -219,7 +219,6 @@ def next_ball(sc):
 
 
 # ── DATA LAYER ────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
 def _fetch_list():
     try:
         r = requests.get(f"https://{RAPIDAPI_HOST}/matches/v1/live",
@@ -499,7 +498,9 @@ def render_navbar(sc, is_live):
         f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v3.5 '
         f'<span style="font-size:11px;color:#64748B;font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div class="navbar-sub">{lb}{sc.get("match","")}</div></div>'
-        f'<div class="navbar-right">{now}<br>OPERATOR: UDAY MADDILA</div>'
+        f'<div class="navbar-right">{now}<br>'
+        f'<span style="color:#4ADE80">Updated: {now}</span><br>'
+        f'<span style="color:#64748B">OPERATOR: UDAY MADDILA</span></div>'
         f'</div>', unsafe_allow_html=True)
 
 
@@ -855,8 +856,9 @@ render_news(news)
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
-    f'GOD\'S EYE v3.5 · Data: Cricbuzz API (RapidAPI) · News: Google News RSS · '
-    f'Refreshes every {REFRESH_SECS}s · © Uday Maddila</div>',
+    f'GOD\'S EYE v3.5 · Data: Cricbuzz API (RapidAPI) · '
+    f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
+    f'Auto-refreshes every {REFRESH_SECS}s · © Uday Maddila</div>',
     unsafe_allow_html=True)
 
 if auto_ref:
