@@ -272,8 +272,9 @@ def _parse_list(raw, source="cricbuzz"):
                 score = m.get("score", [])
                 s1    = score[0] if len(score) > 0 else {}
                 s2    = score[1] if len(score) > 1 else {}
-                # name format: "Team1 vs Team2, Series Name"
-                series = m.get("name","").split(",")[-1].strip() if "," in m.get("name","") else m.get("name","")
+                # name format: "Team1 vs Team2, Series Name, Match N"
+                _name_parts = m.get("name","").split(",")
+                series = ",".join(_name_parts[1:]).strip() if len(_name_parts) > 1 else m.get("name","")
                 out.append({
                     "matchId":    str(m.get("id","")),
                     "team1":      t1,
@@ -421,19 +422,27 @@ def _parse_scard(raw, sc):
 def resolve_live(debug=False):
     raw, status, source = _fetch_list()
     if debug and raw:
-        with st.expander(f"🔍 RAW — Match List ({source})", expanded=True): st.json(raw)
+        with st.expander(f"🔍 RAW — Match List ({source})", expanded=True):
+            st.json(raw)
+            # Show parsed names for easy debugging
+            matches = raw.get("data", [])
+            st.write("**All match names:**")
+            for m in matches:
+                st.write(f"- `{m.get('name','')}` | status: `{m.get('status','')}`")
     if status in (429, 403):
         return None, [], [], {}, {}, status
     if not raw: return None, [], [], {}, {}, status
 
     for m in _parse_list(raw, source):
-        sn  = (m["seriesName"] + " " + m.get("team1","") + " " + m.get("team2","")).upper()
-        st_ = m["status"].lower()
-        is_ipl = "IPL" in sn or "INDIAN PREMIER" in sn
+        # cricketdata: series name is last part of match name e.g. "SRH vs RCB, IPL 2026"
+        combined = (m.get("seriesName","") + " " + m.get("matchId","")).upper()
+        combined_full = (m.get("seriesName","") + " " + m.get("team1","") + " " + m.get("team2","")).upper()
+        is_ipl = any(x in combined_full for x in ["IPL","INDIAN PREMIER","PREMIER LEAGUE"])
         if not is_ipl: continue
         if not m["matchId"]: continue
-        # skip clearly non-live states
-        if any(x in st_ for x in ["toss","upcom","preview","scheduled","yet to"]): continue
+        st_ = m["status"].lower()
+        # skip non-live
+        if any(x in st_ for x in ["toss","upcom","preview","scheduled","yet to","match starts"]): continue
 
         sc = _build_sc(m)
         if not sc: continue
