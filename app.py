@@ -493,12 +493,15 @@ def _parse_cricbuzz_live(raw_list: dict) -> list:
                     # scores may not exist for upcoming
                     t1s = ms.get("team1Score", {})
                     t2s = ms.get("team2Score", {})
+                    venue_info = mi.get("venueInfo", {})
+                    venue = f"{venue_info.get('ground', '')}, {venue_info.get('city', '')}".strip(", ")
                     results.append({
                         "matchId":    mid,
                         "team1":      team1,
                         "team2":      team2,
                         "seriesName": series_name,
                         "status":     status,
+                        "venue":      venue,
                         "t1_score":   t1s,
                         "t2_score":   t2s,
                     })
@@ -637,10 +640,88 @@ def _parse_cricbuzz_scorecard(raw_sc: dict, match_meta: dict) -> tuple:
         return None, [], []
 
 
+def _build_sc_from_match(match: dict) -> dict | None:
+    """
+    Build the sc dict directly from match-list data.
+    The match list already has runs/wickets/overs — no scorecard call needed.
+    """
+    try:
+        t1_name  = match["team1"]
+        t2_name  = match["team2"]
+        t1_short = _team_short(t1_name)
+        t2_short = _team_short(t2_name)
+        venue    = match.get("venue", "")
+        status   = match.get("status", "LIVE")
+        mid      = match["matchId"]
+
+        t1s = match.get("t1_score", {})
+        t2s = match.get("t2_score", {})
+
+        def inn_dict(name, short, score_block):
+            i1 = score_block.get("inngs1", {})
+            r  = _int(i1.get("runs", 0))
+            w  = _int(i1.get("wickets", 0))
+            o  = _float(i1.get("overs", 0))
+            rr = round(r / o, 2) if o > 0 else 0.0
+            return {
+                "name": name, "short": short,
+                "score": str(r), "wickets": str(w),
+                "overs": str(o), "rr": str(rr),
+                "_r": r, "_w": w, "_o": o,
+            }
+
+        inn1 = inn_dict(t1_name, t1_short, t1s)
+        inn2 = inn_dict(t2_name, t2_short, t2s) if t2s else None
+
+        second_innings = inn2 is not None and inn2["_r"] > 0
+        bat_inn   = inn2 if second_innings else inn1
+        field_inn = inn1 if second_innings else {
+            "name": t2_name, "short": t2_short,
+            "score": "—", "wickets": "—", "overs": "0.0", "rr": "0.0",
+            "_r": 0, "_w": 0, "_o": 0.0,
+        }
+
+        target      = inn1["_r"] + 1 if second_innings else 0
+        runs_needed = max(0, target - bat_inn["_r"]) if target > 0 else 0
+        balls_used  = int(bat_inn["_o"]) * 6 + round((bat_inn["_o"] % 1) * 10)
+        balls_left  = max(0, 120 - balls_used)
+        req_rr      = round((runs_needed * 6) / balls_left, 2) if (balls_left > 0 and runs_needed > 0) else 0.0
+        phase       = "powerplay" if bat_inn["_o"] <= 6 else ("death" if bat_inn["_o"] >= 15 else "middle")
+        bat_wp, fld_wp = _win_prob(bat_inn["_r"], bat_inn["_w"], bat_inn["_o"], target) if target > 0 else (50, 50)
+
+        # Figure out which short code is RCB/SRH
+        rcb_bat = "RCB" in bat_inn["short"]
+        srh_bat = "SRH" in bat_inn["short"]
+        rcb_inn = bat_inn   if rcb_bat else (field_inn if "RCB" in field_inn["short"] else bat_inn)
+        srh_inn = bat_inn   if srh_bat else (field_inn if "SRH" in field_inn["short"] else field_inn)
+
+        if rcb_bat:
+            rcb_wp, srh_wp = bat_wp, fld_wp
+        else:
+            rcb_wp, srh_wp = fld_wp, bat_wp
+
+        return {
+            "match":        f"{t1_name} vs {t2_name} — IPL 2026, Match {mid}",
+            "venue":        venue,
+            "status":       status,
+            "rcb":          rcb_inn,
+            "srh":          srh_inn,
+            "target":       target,
+            "required":     runs_needed,
+            "req_rr":       req_rr,
+            "balls_left":   balls_left,
+            "phase":        phase,
+            "rcb_win_prob": rcb_wp,
+            "srh_win_prob": srh_wp,
+        }
+    except Exception:
+        return None
+
+
 def resolve_live_match(debug=False):
     raw_list = _fetch_match_list()
     if debug and raw_list:
-        with st.expander("🔍 RAW — Match List (Cricbuzz)", expanded=False):
+        with st.expander("🔍 RAW — Match List (Cricbuzz)", expanded=True):
             st.json(raw_list)
     if not raw_list:
         return None, [], []
@@ -649,25 +730,28 @@ def resolve_live_match(debug=False):
 
     for match in matches:
         series = match["seriesName"].upper()
-        t1     = match["team1"].upper()
-        t2     = match["team2"].upper()
         status = match["status"].lower()
 
         if "IPL" not in series and "INDIAN PREMIER" not in series:
             continue
-        if "upcom" in status or "yet to" in status or "preview" in status or not match["matchId"]:
+        if "upcom" in status or "toss" in status or "yet to" in status or not match["matchId"]:
             continue
 
+        # Step 1 — build sc directly from match-list (always works)
+        sc = _build_sc_from_match(match)
+        if not sc:
+            continue
+
+        # Step 2 — try scorecard for player detail (optional enrichment)
+        batters, bowlers = [], []
         raw_sc = _fetch_scorecard(match["matchId"])
         if debug and raw_sc:
             with st.expander(f"🔍 RAW — Scorecard ({match['matchId']})", expanded=False):
                 st.json(raw_sc)
-        if not raw_sc:
-            continue
+        if raw_sc:
+            _, batters, bowlers = _parse_cricbuzz_scorecard(raw_sc, match)
 
-        sc, batters, bowlers = _parse_cricbuzz_scorecard(raw_sc, match)
-        if sc:
-            return sc, batters, bowlers
+        return sc, batters, bowlers
 
     return None, [], []
 
