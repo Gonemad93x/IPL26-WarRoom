@@ -74,7 +74,7 @@ html, body,
 [data-testid="stHeader"],
 [data-testid="stToolbar"],
 footer { display:none !important; }
-section[data-testid="stSidebar"] { display:none !important; }
+/* sidebar visible */
 div.block-container { padding:1.6rem 2.4rem 3rem !important; max-width:1440px; }
 .stMarkdown { padding:0 !important; }
 [data-testid="stHorizontalBlock"] > div { padding:0 5px; }
@@ -1234,22 +1234,19 @@ def render_neural_verdict(sc, batters, bowlers):
 # ─────────────────────────────────────────────────────────────────
 # 8. SIDEBAR
 # ─────────────────────────────────────────────────────────────────
-with st.sidebar:
+_c1, _c2, _c3, _c4 = st.columns([3, 1, 1, 1])
+with _c1:
     st.markdown(
-        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;'
-        'color:#7D8590;margin-bottom:12px">&#9881; SYSTEM CONTROLS</div>',
+        '<div style="font-family:var(--fm);font-size:10px;color:#484F58;padding-top:6px">'
+        "GOD'S EYE v3.4 &middot; IPL Match Center &middot; &#169; Uday Maddila</div>",
         unsafe_allow_html=True,
     )
-    auto_refresh = st.toggle("Auto-Refresh (30s)", value=True)
-    show_demo    = st.toggle("Force Demo Data",    value=False)
-    debug_mode   = st.toggle("Debug API Response", value=False)
-    st.divider()
-    st.markdown(
-        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
-        'color:#484F58">GOD\'S EYE v3.4<br>IPL Match Center<br>'
-        '&#169; Uday Maddila</div>',
-        unsafe_allow_html=True,
-    )
+with _c2:
+    auto_refresh = st.toggle("Auto-Refresh", value=True)
+with _c3:
+    show_demo    = st.toggle("Demo Mode",    value=False)
+with _c4:
+    debug_mode   = st.toggle("Debug API",   value=False)
 
 
 # ─────────────────────────────────────────────────────────────────
