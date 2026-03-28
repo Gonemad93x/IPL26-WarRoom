@@ -17,7 +17,7 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
 RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"
 API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
-REFRESH_SECS  = 1
+REFRESH_SECS  = 15
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -828,17 +828,58 @@ with ce:
         st.cache_data.clear(); st.rerun()
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
+# Rate-limit guard: only hit API every API_INTERVAL seconds
+# UI reruns every REFRESH_SECS for responsiveness, but API is called sparingly
+API_INTERVAL = 15  # seconds between actual API calls
+
+_now = time.time()
+if "last_fetch" not in st.session_state:
+    st.session_state.last_fetch   = 0
+    st.session_state.cached_sc    = None
+    st.session_state.cached_bat   = []
+    st.session_state.cached_bowl  = []
+    st.session_state.cached_ext   = {}
+    st.session_state.cached_part  = {}
+
 sc=None; batters=[]; bowlers=[]; extras={}; partner={}; is_live=False
 
 if not demo_mode:
-    with st.spinner("Fetching live data..."):
-        sc,batters,bowlers,extras,partner = resolve_live(debug=debug_api)
+    due = (_now - st.session_state.last_fetch) >= API_INTERVAL
+    if due:
+        with st.spinner(""):
+            sc,batters,bowlers,extras,partner = resolve_live(debug=debug_api)
+        if sc is not None:
+            st.session_state.cached_sc   = sc
+            st.session_state.cached_bat  = batters
+            st.session_state.cached_bowl = bowlers
+            st.session_state.cached_ext  = extras
+            st.session_state.cached_part = partner
+            st.session_state.last_fetch  = _now
+        elif st.session_state.cached_sc is not None:
+            # Keep showing last good data even if this call failed
+            sc      = st.session_state.cached_sc
+            batters = st.session_state.cached_bat
+            bowlers = st.session_state.cached_bowl
+            extras  = st.session_state.cached_ext
+            partner = st.session_state.cached_part
+            is_live = True
+    else:
+        # Not due yet — use cached data from session state
+        sc      = st.session_state.cached_sc
+        batters = st.session_state.cached_bat
+        bowlers = st.session_state.cached_bowl
+        extras  = st.session_state.cached_ext
+        partner = st.session_state.cached_part
         is_live = sc is not None
+
+    if sc is not None:
+        is_live = True
 
 if sc is None:
     st.info("📡 No live IPL match right now — showing demo data.")
     sc,batters,bowlers,extras,partner = _demo()
 
+next_fetch_in = max(0, int(API_INTERVAL - (_now - st.session_state.last_fetch)))
 news = _fetch_news()
 
 render_navbar(sc, is_live)
@@ -858,7 +899,7 @@ st.markdown(
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
     f'GOD\'S EYE v3.5 · Data: Cricbuzz API (RapidAPI) · '
     f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
-    f'Auto-refreshes every {REFRESH_SECS}s · © Uday Maddila</div>',
+    f'Next API call in: {next_fetch_in}s · © Uday Maddila</div>',
     unsafe_allow_html=True)
 
 if auto_ref:
