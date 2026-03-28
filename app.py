@@ -1052,13 +1052,43 @@ def render_scorebook(sc):
     rr   = sc.get("req_rr",0)
     rc   = "var(--red)" if rr>10 else "var(--amber)"
     clutch_class = "clutch-alert" if rr > 10 else ""
+
+    def _score_display(inn):
+        s = inn.get("score","—")
+        w = inn.get("wickets","—")
+        o = inn.get("overs","0.0")
+        r = inn.get("rr","0.0")
+        if s in ("—", "&mdash;", "0", "", None) or str(s) == "0":
+            score_html = '<span style="font-size:22px;color:var(--td);letter-spacing:2px">YET TO BAT</span>'
+            sub_html   = '<span style="color:var(--td)">Batting 2nd</span>'
+        else:
+            score_html = f'{s}/{w}'
+            sub_html   = f'({o} OV) &nbsp;CRR: {r}'
+        return score_html, sub_html
+
+    rcb_score, rcb_sub = _score_display(rcb)
+    srh_score, srh_sub = _score_display(srh)
+
+    if req > 0:
+        status_bar = (
+            f'<span><span style="color:var(--red);font-weight:700">RCB CHASE</span>&nbsp;&middot;&nbsp;'
+            f'Need <b style="color:var(--tp)">{req}</b> runs off <b style="color:var(--tp)">{bl}</b> balls</span>'
+            f'<span>Req RR: <b style="color:{rc}">{rr}</b></span>'
+        )
+    else:
+        status_bar = (
+            f'<span><span style="color:var(--amber);font-weight:700">1ST INNINGS LIVE</span>&nbsp;&middot;&nbsp;'
+            f'{sc.get("status","In Progress")}</span>'
+            f'<span style="color:var(--td)">RCB bat 2nd</span>'
+        )
+
     st.markdown(
         f'<div class="gc {clutch_class}">'
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:20px">'
         '<div style="flex:1;min-width:160px">'
         f'<div class="tl" style="color:#D22D3D">&#9670; {rcb.get("short","RCB")}</div>'
-        f'<div class="mxl">{rcb.get("score","&mdash;")}/{rcb.get("wickets","&mdash;")}</div>'
-        f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px">({rcb.get("overs","&mdash;")} OV) &nbsp;CRR: {rcb.get("rr","&mdash;")}</div>'
+        f'<div class="mxl">{rcb_score}</div>'
+        f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px">{rcb_sub}</div>'
         '</div>'
         '<div style="flex:2;min-width:260px;padding:0 18px">'
         '<div style="font-family:var(--fm);font-size:10px;letter-spacing:2px;color:var(--td);text-align:center;margin-bottom:10px">WIN PROBABILITY</div>'
@@ -1071,19 +1101,15 @@ def render_scorebook(sc):
         '</div>'
         '<div style="flex:1;min-width:160px;text-align:right">'
         f'<div class="tl" style="color:#FF822A;text-align:right">&#9670; {srh.get("short","SRH")}</div>'
-        f'<div class="mxl">{srh.get("score","&mdash;")}/{srh.get("wickets","&mdash;")}</div>'
-        f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px">({srh.get("overs","&mdash;")} OV) &nbsp;CRR: {srh.get("rr","&mdash;")}</div>'
-        '</div>'
-        '</div>'
+        f'<div class="mxl" style="text-align:right">{srh_score}</div>'
+        f'<div style="font-family:var(--fm);font-size:13px;color:var(--tm);margin-top:5px;text-align:right">{srh_sub}</div>'
+        '</div></div>'
         '<div style="margin-top:20px;padding:11px 16px;background:rgba(255,62,62,0.06);'
         'border:1px solid rgba(255,62,62,0.2);border-radius:8px;font-family:var(--fm);'
         'font-size:12px;color:var(--tm);display:flex;justify-content:space-between;align-items:center">'
-        f'<span><span style="color:var(--red);font-weight:700">RCB CHASE STATUS</span>&nbsp;&middot;&nbsp;'
-        f'Need <b style="color:var(--tp)">{req}</b> runs off <b style="color:var(--tp)">{bl}</b> balls</span>'
-        f'<span>Req RR: <b style="color:{rc}">{rr}</b></span>'
+        + status_bar +
         '</div></div>',
         unsafe_allow_html=True)
-
 
 def render_next_ball(sc):
     st.markdown('<div class="sh" style="margin-top:22px">&#9672; NEXT BALL INTELLIGENCE</div>', unsafe_allow_html=True)
@@ -1121,7 +1147,7 @@ def render_next_ball(sc):
             f'&#9654; Most likely: <b style="color:var(--cyan)">{ml_desc[ml]}</b></div></div>',
             unsafe_allow_html=True)
     with cb:
-        wkts_left = 10 - int(sc.get("rcb",{}).get("wickets","3") or 3)
+        wkts_left = 10 - _int(sc.get("rcb",{}).get("wickets","0") or 0)
         st.markdown(
             f'<div class="gc gc-red" style="height:100%">'
             f'<div class="kl">BATTING PRESSURE INDEX</div>'
@@ -1318,7 +1344,7 @@ def render_neural_verdict(sc, batters, bowlers):
 # ─────────────────────────────────────────────────────────────────
 # 8. SIDEBAR
 # ─────────────────────────────────────────────────────────────────
-_c1, _c2, _c3, _c4 = st.columns([3, 1, 1, 1])
+_c1, _c2, _c3, _c4, _c5 = st.columns([2, 1, 1, 1, 1])
 with _c1:
     st.markdown(
         '<div style="font-family:var(--fm);font-size:10px;color:#484F58;padding-top:6px">'
@@ -1331,6 +1357,11 @@ with _c3:
     show_demo    = st.toggle("Demo Mode",    value=False)
 with _c4:
     debug_mode   = st.toggle("Debug API",   value=False)
+with _c5:
+    manual_refresh = st.button("🔄 Refresh Now", use_container_width=True)
+if manual_refresh:
+    st.cache_data.clear()
+    st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────────
