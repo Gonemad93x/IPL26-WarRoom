@@ -14,13 +14,11 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
                    layout="wide", initial_sidebar_state="collapsed")
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
-# PRIMARY: unofficial-cricbuzz (subscribe free at rapidapi.com/naeimsalib/api/unofficial-cricbuzz)
-RAPIDAPI_HOST = "unofficial-cricbuzz.p.rapidapi.com"
-API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
-# BACKUP host (switch if quota hit): "cricbuzz-cricket.p.rapidapi.com"
-BACKUP_HOST   = "cricbuzz-cricket.p.rapidapi.com"
+# cricketdata.org — FREE 100 calls/hour, no monthly cap
+CRICDATA_KEY  = "baaf9a21-10d9-450a-b06a-1dcd5569706e"
+CRICDATA_BASE = "https://api.cricapi.com/v1"
 REFRESH_SECS  = 15
+API_INTERVAL  = 60   # one API call per minute = 60/hr, well within free limit
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -221,32 +219,30 @@ def next_ball(sc):
     return {k: max(1, round(d[k]/tot*100)) for k in keys}
 
 
-# ── DATA LAYER ────────────────────────────────────────────────────────────────
+# ── DATA LAYER — cricketdata.org ─────────────────────────────────────────────
 def _fetch_list():
-    """Returns (data, status_code). Tries primary host, falls back to backup on 429/403."""
-    for host in [RAPIDAPI_HOST, BACKUP_HOST]:
-        try:
-            h = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": host}
-            r = requests.get(f"https://{host}/matches/v1/live", headers=h, timeout=8)
-            if r.status_code == 200: return r.json(), 200
-            if r.status_code not in (429, 403): return None, r.status_code
-            # 429/403 on this host — try next
-        except: pass
-    return None, 429  # both hosts exhausted
+    """Returns (data, status_code, source). source is always 'cricdata' now."""
+    try:
+        r = requests.get(f"{CRICDATA_BASE}/currentMatches",
+                         params={"apikey": CRICDATA_KEY, "offset": 0}, timeout=10)
+        if r.status_code == 200:
+            d = r.json()
+            if d.get("status") == "success": return d, 200, "cricdata"
+            if "limit" in str(d).lower() or d.get("status") == "failure":
+                return None, 429, "cricdata"
+            return None, 200, "cricdata"
+        return None, r.status_code, "cricdata"
+    except: pass
+    return None, 0, "cricdata"
 
-def _fetch_list_data():
-    """Compatibility wrapper — returns just data."""
-    data, _ = _fetch_list()
-    return data
-
-@st.cache_data(ttl=10, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def _fetch_scard(mid):
-    for host in [RAPIDAPI_HOST, BACKUP_HOST]:
-        try:
-            h = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": host}
-            r = requests.get(f"https://{host}/mcenter/v1/{mid}/hscard", headers=h, timeout=8)
-            if r.status_code == 200: return r.json()
-        except: pass
+    """Fetch scorecard from cricketdata.org /match_scorecard."""
+    try:
+        r = requests.get(f"{CRICDATA_BASE}/match_scorecard",
+                         params={"apikey": CRICDATA_KEY, "id": mid}, timeout=10)
+        if r.status_code == 200: return r.json()
+    except: pass
     return None
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -276,7 +272,8 @@ def _parse_list(raw, source="cricbuzz"):
                 score = m.get("score", [])
                 s1    = score[0] if len(score) > 0 else {}
                 s2    = score[1] if len(score) > 1 else {}
-                series= m.get("series", m.get("matchType",""))
+                # name format: "Team1 vs Team2, Series Name"
+                series = m.get("name","").split(",")[-1].strip() if "," in m.get("name","") else m.get("name","")
                 out.append({
                     "matchId":    str(m.get("id","")),
                     "team1":      t1,
@@ -430,10 +427,13 @@ def resolve_live(debug=False):
     if not raw: return None, [], [], {}, {}, status
 
     for m in _parse_list(raw, source):
-        sn  = m["seriesName"].upper()
+        sn  = (m["seriesName"] + " " + m.get("team1","") + " " + m.get("team2","")).upper()
         st_ = m["status"].lower()
-        if "IPL" not in sn and "INDIAN PREMIER" not in sn: continue
-        if not m["matchId"] or "toss" in st_ or "upcom" in st_: continue
+        is_ipl = "IPL" in sn or "INDIAN PREMIER" in sn
+        if not is_ipl: continue
+        if not m["matchId"]: continue
+        # skip clearly non-live states
+        if any(x in st_ for x in ["toss","upcom","preview","scheduled","yet to"]): continue
 
         sc = _build_sc(m)
         if not sc: continue
