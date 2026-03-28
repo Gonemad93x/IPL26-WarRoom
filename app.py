@@ -17,7 +17,7 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
 RAPIDAPI_KEY  = "f26160eb44mshc0a20698180c97dp18f61ejsn98a8e23fdf41"
 RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com"
 API_HEADERS   = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
-REFRESH_SECS  = 30
+REFRESH_SECS  = 15
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
