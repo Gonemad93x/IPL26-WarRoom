@@ -870,9 +870,11 @@ def _build_oracle_prompt(sc, batters, bowlers):
     if sc["second_innings"]:
         ctx_parts.append(f"Target: {sc['target']}, Need: {sc['required']} in {sc['balls_left']//6}.{sc['balls_left']%6} ov (Req RR: {sc['req_rr']})")
     if batters:
-        ctx_parts.append(f"Batters: {', '.join([f'{b[\"name\"]} {b[\"runs\"]}({b[\"balls\"]})' for b in batters])}")
+        bat_str = ', '.join([b["name"] + " " + str(b["runs"]) + "(" + str(b["balls"]) + ")" for b in batters])
+        ctx_parts.append("Batters: " + bat_str)
     if bowlers:
-        ctx_parts.append(f"Bowlers: {', '.join([f'{b[\"name\"]} {b[\"overs\"]}ov {b[\"wkts\"]}w' for b in bowlers])}")
+        bwl_str = ', '.join([b["name"] + " " + str(b["overs"]) + "ov " + str(b["wkts"]) + "w" for b in bowlers])
+        ctx_parts.append("Bowlers: " + bwl_str)
     
     return ". ".join(ctx_parts) + ". Give a 3-sentence broadcast commentary update with tactical insight."
 
