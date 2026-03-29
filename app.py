@@ -19,7 +19,7 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
                    layout="wide", initial_sidebar_state="collapsed")
 
 # ── CONSTANTS (NO MORE API KEYS) ──────────────────────────────────────────────
-REFRESH_SECS  = 15
+REFRESH_SECS  = 5
 ESPN_URL = "https://www.espncricinfo.com/series/indian-premier-league-2026-1411166/royal-challengers-bengaluru-vs-sunrisers-hyderabad-1st-match-1417706/live-cricket-score"
 CB_URL = "https://www.cricbuzz.com/live-cricket-scores/149518/srh-vs-rcb-1st-match-indian-premier-league-2026"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'}
