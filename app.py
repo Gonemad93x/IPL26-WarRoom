@@ -1,7 +1,7 @@
 """
 GOD'S EYE v4.2 — IPL LIVE MATCH CENTER (GOD TIER)
 Operator : Uday Maddila
-Update: Injected Tactical Layer (Timeline, DRS, Worm) & Strategic Layer (Pitch, Standings).
+Update: Patched Dictionary Collision Error. Fully stable Dual-Tab Scraper Build.
 """
 
 import streamlit as st
@@ -176,10 +176,12 @@ def _float(v, d=0.0):
     except: return d
 
 def _layout(**kw):
-    return dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Inter, sans-serif", color="#475569", size=11),
-                margin=dict(l=10, r=10, t=34, b=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"), **kw)
+    d = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+             font=dict(family="Inter, sans-serif", color="#475569", size=11),
+             margin=dict(l=10, r=10, t=34, b=10),
+             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"))
+    d.update(kw)
+    return d
 
 def _ax(title="", sfx="", rng=None, **kw):
     d = dict(title=title, showgrid=True, gridcolor="#F1F5F9", zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0")
@@ -326,7 +328,7 @@ def _get_last_match():
         {"name":"Jacob Duffy","team":"RCB","overs":4.0,"runs":22,"wkts":3,"maidens":0,"econ":5.50,"bowling_now":False},
     ]
     extras = {"wides":0,"noballs":0,"legbyes":0,"byes":0,"total":0}
-    partner= {"balls":25,"runs":48,"p1_name":"Ishan", "p1_runs":34, "p2_name":"Patidar", "p2_runs":14} # Split added
+    partner= {"balls":25,"runs":48,"p1_name":"Ishan", "p1_runs":34, "p2_name":"Patidar", "p2_runs":14} 
     
     return sc, bat, bowl, extras, partner
 
@@ -505,7 +507,7 @@ def render_stats_bar(sc, batters, bowlers, extras, partner):
     else:
         tile(c2,"Wickets Left",str(wl), f'{bat["wickets"]} fallen so far',"#7C3AED","#7C3AED")
 
-    # Injected V4.2 Partnership Split
+    # V4.2 Partnership Split
     if partner and partner.get("runs", 0) > 0:
         pr = partner.get("runs", 0); pb = partner.get("balls", 0)
         p1r = partner.get("p1_runs", 0); p2r = partner.get("p2_runs", 0)
@@ -564,6 +566,68 @@ def render_momentum_and_predict(sc, batters, bowlers):
         ov, wp, rr, req = demo_momentum()
         st.plotly_chart(chart_momentum(ov, wp, rr, req), width="stretch", config={"displayModeBar":False})
         st.markdown('</div>', unsafe_allow_html=True)
+
+def render_batters(batters):
+    st.markdown('<div class="sh">🏏 Batting Highlights</div>', unsafe_allow_html=True)
+    if not batters:
+        st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading — data will appear shortly.</div>', unsafe_allow_html=True)
+        return
+
+    grid = "2.4fr 50px 50px 45px 45px 75px 55px"
+    hdr = (f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
+           f'<div>Batter</div><div style="text-align:right">R</div>'
+           f'<div style="text-align:right">B</div><div style="text-align:right">4s</div>'
+           f'<div style="text-align:right">6s</div><div style="text-align:right">SR</div>'
+           f'<div style="text-align:right">Status</div></div>')
+    rows = ""
+    for b in batters:
+        bn   = b.get("batting_now", False)
+        tc   = _c(b["team"])
+        sr   = b["sr"]
+        sr_c = "green" if sr>=150 else ("amber" if sr>=100 else "red")
+        name_html = (f'<span class="player-name" style="color:{tc}">{b["name"]}</span>'
+                     + ('<span class="batting-now">▶ BATTING</span>' if bn else ""))
+        out_html  = ('<span class="green">not out</span>' if bn else
+                     f'<span style="font-size:10px;color:#64748B">{b["status"][:22]}</span>')
+        rows += (f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
+                 f'<div>{name_html}</div>'
+                 f'<div class="num"><b>{b["runs"]}</b></div>'
+                 f'<div class="num">{b["balls"]}</div>'
+                 f'<div class="num">{b["4s"]}</div>'
+                 f'<div class="num">{b["6s"]}</div>'
+                 f'<div class="num"><span class="{sr_c}">{sr}</span></div>'
+                 f'<div class="num" style="text-align:right">{out_html}</div>'
+                 f'</div>')
+    st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
+
+def render_bowlers(bowlers):
+    st.markdown('<div class="sh">🎯 Bowling Highlights</div>', unsafe_allow_html=True)
+    if not bowlers:
+        st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading — data will appear shortly.</div>', unsafe_allow_html=True)
+        return
+
+    grid = "2.2fr 55px 55px 55px 55px 70px"
+    hdr = (f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
+           f'<div>Bowler</div><div style="text-align:right">O</div>'
+           f'<div style="text-align:right">M</div><div style="text-align:right">R</div>'
+           f'<div style="text-align:right">W</div><div style="text-align:right">Econ</div></div>')
+    rows = ""
+    for b in sorted(bowlers, key=lambda x:-x["overs"]):
+        tc   = _c(b["team"])
+        ec   = b["econ"]
+        ec_c = "green" if ec<8 else ("amber" if ec<11 else "red")
+        wkt_style = 'style="color:#DC2626;font-weight:700"' if b["wkts"]>0 else ""
+        bn_html = '<span style="color:#16A34A;font-size:10px;font-weight:700;margin-left:4px">▶ BOWLING</span>' if b.get("bowling_now") else ""
+        rows += (f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
+                 f'<div><span class="player-name" style="color:{tc}">{b["name"]}</span>{bn_html}</div>'
+                 f'<div class="num">{b["overs"]}</div>'
+                 f'<div class="num">{b["maidens"]}</div>'
+                 f'<div class="num">{b["runs"]}</div>'
+                 f'<div class="num"><span {wkt_style}>{b["wkts"]}</span></div>'
+                 f'<div class="num"><span class="{ec_c}">{ec}</span></div>'
+                 f'</div>')
+    st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
+
 
 def render_upcoming_match(news):
     st.markdown('<div class="sh" style="margin-top:20px">&#9672; TONIGHT\'S BLOCKBUSTER</div>', unsafe_allow_html=True)
@@ -650,6 +714,14 @@ with tab1:
     render_tactical_layer(sc)
     render_momentum_and_predict(sc, batters, bowlers)
 
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    cl, cr = st.columns(2, gap="medium")
+    with cl: render_batters(batters)
+    with cr: render_bowlers(bowlers)
+
+with tab2:
+    render_upcoming_match(upcoming_news)
+
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
@@ -657,9 +729,6 @@ st.markdown(
     f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
     f'© Uday Maddila</div>',
     unsafe_allow_html=True)
-
-with tab2:
-    render_upcoming_match(upcoming_news)
 
 if auto_ref:
     time.sleep(REFRESH_SECS)
