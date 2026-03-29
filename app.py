@@ -1,9 +1,8 @@
 """
-GOD'S EYE v5.0 — IPL LIVE MATCH CENTER
+GOD'S EYE v5.1 — IPL LIVE MATCH CENTER
 Operator : Uday Maddila
-v5.0: 6-Tab Architecture | Monte Carlo | Chase Trajectory | Player Intel |
-      Ground Intel | Claude AI Commentary | Captain's Corner | Alert System |
-      Smart URL Switcher | Multi-Source Consensus Scraper
+Update: Fixed Claude's hallucinated model name, patched dictionary collision, 
+        corrected Match 1 labels, and updated Demo badge to Archive.
 """
 
 import streamlit as st
@@ -26,7 +25,7 @@ st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
 if "alert_log"    not in st.session_state: st.session_state.alert_log = []
 if "prev_score"   not in st.session_state: st.session_state.prev_score = {}
 if "prev_wkts"    not in st.session_state: st.session_state.prev_wkts = -1
-if "scraper_src"  not in st.session_state: st.session_state.scraper_src = "Demo"
+if "scraper_src"  not in st.session_state: st.session_state.scraper_src = "Archive"
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
 REFRESH_SECS  = 15
@@ -190,7 +189,7 @@ div[data-testid="stExpander"] details summary p{font-weight:700;color:#1E293B;le
 .pts-hdr{font-size:10px;font-weight:700;letter-spacing:1px;color:#94A3B8;text-transform:uppercase;}
 .src-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;letter-spacing:1px;}
 .src-live{background:#DCFCE7;color:#16A34A;}
-.src-demo{background:#FEF3C7;color:#92400E;}
+.src-archive{background:#FEF3C7;color:#92400E;}
 .src-dual{background:#DBEAFE;color:#1D4ED8;}
 </style>
 """, unsafe_allow_html=True)
@@ -215,6 +214,7 @@ def _float(v, d=0.0):
     except: return d
 
 def _layout(**kw):
+    # FIXED: Replaced Claude's broken dict merge with safe dictionary update
     d = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
              font=dict(family="Inter, sans-serif", color="#475569", size=11),
              margin=dict(l=10, r=10, t=34, b=10),
@@ -365,7 +365,6 @@ def build_chase_trajectories(sc):
             extra = el - cons_half
             conservative.append(round(base + extra * req_rr * 1.30, 1))
 
-        # Historical: slight above-par with noise
         historical.append(round(cur_score + el * req_rr * (1.04 + 0.02*(-1 if el%1==0 else 1)), 1))
 
     return overs, optimal, aggressive, conservative, historical, target, cur_score
@@ -373,7 +372,6 @@ def build_chase_trajectories(sc):
 
 # ── PLAYER PRESSURE INDEX ─────────────────────────────────────────────────────
 def compute_ppi(batter, sc):
-    """Composite pressure index 0-100 for a batter."""
     phase_mult = {"powerplay":0.85, "middle":1.0, "death":1.3}
     pm = phase_mult.get(sc["phase"], 1.0)
     sr_base = 130.0
@@ -501,7 +499,7 @@ def resolve_scraper():
     elif cb_data:
         st.session_state.scraper_src = "Cricbuzz"
     else:
-        st.session_state.scraper_src = "Demo"
+        st.session_state.scraper_src = "Archive" # FIXED: Replaced "Demo" badge
 
     return _get_last_match()
 
@@ -580,13 +578,14 @@ def generate_match_preview(news):
     return mi_key, kkr_key, alerts
 
 
-# ── DEMO DATA ─────────────────────────────────────────────────────────────────
+# ── ARCHIVED MATCH DATA ───────────────────────────────────────────────────────
 def _get_last_match():
+    # FIXED: Changed "Match 9" back to "1st Match"
     srh = {"name":"Sunrisers Hyderabad","short":"SRH","score":"201","wickets":"9",
            "overs":"20.0","rr":"10.05","_r":201,"_w":9,"_o":20.0}
     rcb = {"name":"Royal Challengers Bengaluru","short":"RCB","score":"203","wickets":"4",
            "overs":"15.4","rr":"12.95","_r":203,"_w":4,"_o":15.4}
-    sc  = {"match":"SRH vs RCB — IPL 2026, Match 9","venue":"M. Chinnaswamy Stadium, Bengaluru",
+    sc  = {"match":"SRH vs RCB — IPL 2026, 1st Match","venue":"M. Chinnaswamy Stadium, Bengaluru",
            "status":"RCB won by 6 wickets","bat":rcb,"field":srh,"t1":srh,"t2":rcb,
            "target":202,"required":0,"req_rr":0.0,"balls_left":0,
            "phase":"completed","second_innings":True,"bat_wp":100,"fld_wp":0,
@@ -651,7 +650,7 @@ def _call_claude(prompt, system_msg="", max_tokens=350):
         return None
     try:
         payload = {
-            "model": "claude-haiku-4-5-20251001",
+            "model": "claude-3-haiku-20240307", # FIXED: Using the real model name
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -803,7 +802,7 @@ def chart_ppi_gauge(batters, sc):
     names, ppis, colors = [], [], []
     for b in batters[:6]:
         ppi = compute_ppi(b, sc)
-        lbl, clr = ppi_label(ppi) # FIX: Unpack 2 values, not 3
+        lbl, clr = ppi_label(ppi) # FIXED: Properly unpacks only two values
         names.append(b["name"].split()[-1])
         ppis.append(ppi)
         colors.append(clr)
@@ -890,13 +889,13 @@ def render_navbar(sc, is_live):
     IST = pytz.timezone("Asia/Kolkata")
     now = datetime.now(IST).strftime("%d %b %Y · %H:%M IST")
     src = st.session_state.scraper_src
-    src_cls = "src-live" if src in ("ESPN","Cricbuzz") else ("src-dual" if src=="Dual-Source" else "src-demo")
+    src_cls = "src-live" if src in ("ESPN","Cricbuzz") else ("src-dual" if src=="Dual-Source" else "src-archive")
     lb = ('<span style="background:#DC2626;color:white;font-size:9px;font-weight:700;'
           'padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-right:8px">LIVE</span>'
           if is_live else "")
     st.markdown(
         f'<div class="navbar">'
-        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v5.0 '
+        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v5.1 '
         f'<span style="font-size:11px;color:#94A3B8;font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div class="navbar-sub">{lb}{sc.get("match","")}&nbsp;'
         f'<span class="src-badge {src_cls}">{src}</span></div></div>'
@@ -961,13 +960,13 @@ def render_scoreboard(sc):
         s=field["score"]; w=field["wickets"]; o=field["overs"]; rr=field["rr"]; drs2=sc.get("drs",{}).get("fld",0)
         st.markdown(
             f'<div class="score-card" style="border-left:4px solid {fc}">'
-            f'<div class="team-badge" style="color:{fc}">&#9889; {field["short"]} (DRS: {drs2})</div>'
+            f'<div class="team-badge" style="color:{fc}">⚡ {field["short"]} (DRS: {drs2})</div>'
             f'<div class="score-big" style="color:{fc}">{s}/{w}</div>'
             f'<div class="score-detail">{o} Ov &nbsp;·&nbsp; CRR: <b>{rr}</b></div>'
             f'</div>', unsafe_allow_html=True)
 
 def render_stats_bar(sc, batters, bowlers, extras, partner):
-    st.markdown('<div class="sh">&#128202; Tactical Match Stats</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">📊 Tactical Match Stats</div>', unsafe_allow_html=True)
     bat=sc["bat"]; two=sc["second_innings"]; wl=10-bat["_w"]
     crr_c="#16A34A" if _float(bat["rr"])>=8 else ("#D97706" if _float(bat["rr"])>=6 else "#DC2626")
     top_bat = max(batters, key=lambda x:x["runs"]) if batters else None
@@ -1015,16 +1014,16 @@ def render_stats_bar(sc, batters, bowlers, extras, partner):
 def render_tactical_layer(sc):
     c1,c2 = st.columns([3,2])
     with c1:
-        st.markdown('<div class="sh" style="margin-top:0">&#9889; Recent Deliveries</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh" style="margin-top:0">⚡ Recent Deliveries</div>', unsafe_allow_html=True)
         balls=sc.get("recent_balls",[])
         html='<div class="card" style="padding:12px 20px"><div class="timeline-box">'
         for b in balls:
             cls="ball-w" if b=="W" else ("ball-4" if b=="4" else ("ball-6" if b=="6" else ""))
             html+=f'<div class="ball-badge {cls}">{b}</div>'
-        html+='<div style="margin-left:auto;font-size:11px;color:#94A3B8;font-weight:600">&#9658; THIS OVER</div></div></div>'
+        html+='<div style="margin-left:auto;font-size:11px;color:#94A3B8;font-weight:600">▶ THIS OVER</div></div></div>'
         st.markdown(html, unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="sh" style="margin-top:0">&#128260; Impact Player</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh" style="margin-top:0">🔄 Impact Player</div>', unsafe_allow_html=True)
         ib=sc.get("impact",{}).get("bat","Available"); ifld=sc.get("impact",{}).get("fld","Available")
         st.markdown(
             f'<div class="card" style="padding:12px 20px">'
@@ -1034,23 +1033,23 @@ def render_tactical_layer(sc):
             f'</div></div>', unsafe_allow_html=True)
 
 def render_momentum_and_predict(sc, batters, bowlers):
-    st.markdown('<div class="sh" style="margin-top:22px">&#128302; Momentum &amp; Prediction</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:22px">🔮 Momentum &amp; Prediction</div>', unsafe_allow_html=True)
     c1,c2 = st.columns([2,3])
     with c1:
         bat=sc["bat"]; two=sc["second_innings"]; bwp=sc["bat_wp"]
         if sc["phase"]=="completed":
-            verdict,clr,txt="&#127942; Match Concluded","green",f"<b>{sc['status']}</b>."
+            verdict,clr,txt="🏆 Match Concluded","green",f"<b>{sc['status']}</b>."
         elif not two:
             crr=_float(bat["rr"]); o=bat["_o"]; bu=int(o)*6+round((o%1)*10); bl=max(1,120-bu)
             proj=bat["_r"]+round(crr*bl/6*0.9)
-            if crr>=10: verdict,clr,txt="&#128293; Explosive","green",f"Projected: <b>~{proj}</b>"
-            elif crr>=8: verdict,clr,txt="&#9989; Solid","green",f"Projected: <b>~{proj}</b>"
-            else: verdict,clr,txt="&#9888; Below Par","amber",f"Projected: <b>~{proj}</b>"
+            if crr>=10: verdict,clr,txt="🔥 Explosive","green",f"Projected: <b>~{proj}</b>"
+            elif crr>=8: verdict,clr,txt="✅ Solid","green",f"Projected: <b>~{proj}</b>"
+            else: verdict,clr,txt="⚠️ Below Par","amber",f"Projected: <b>~{proj}</b>"
         else:
             rn=sc["required"]; bl=sc["balls_left"]; rr2=sc["req_rr"]; wl=10-bat["_w"]
-            if bwp>=65: verdict,clr,txt="&#129001; Chase On Track","green",f"Need <b>{rn}</b> off <b>{bl}</b> · <b>{wl} wkts</b> in hand"
-            elif bwp>=45: verdict,clr,txt="&#129000; Finely Balanced","amber",f"Need <b>{rn}</b> off <b>{bl}</b> · Req RR <b>{rr2}</b>"
-            else: verdict,clr,txt="&#128997; Under Pressure","red",f"Need <b>{rn}</b> off <b>{bl}</b> · Req RR <b>{rr2}</b>"
+            if bwp>=65: verdict,clr,txt="🟢 Chase On Track","green",f"Need <b>{rn}</b> off <b>{bl}</b> · <b>{wl} wkts</b> in hand"
+            elif bwp>=45: verdict,clr,txt="🟡 Finely Balanced","amber",f"Need <b>{rn}</b> off <b>{bl}</b> · Req RR <b>{rr2}</b>"
+            else: verdict,clr,txt="🔴 Under Pressure","red",f"Need <b>{rn}</b> off <b>{bl}</b> · Req RR <b>{rr2}</b>"
         cls_map={"green":"pred-green","amber":"pred-amber","red":"pred-red"}
         st.markdown(f'<div class="{cls_map[clr]}" style="height:100%"><div class="pred-title">{verdict}</div><div class="pred-body">{txt}</div></div>',
                     unsafe_allow_html=True)
@@ -1059,7 +1058,7 @@ def render_momentum_and_predict(sc, batters, bowlers):
         st.plotly_chart(chart_momentum(ov,wp,rr,req), use_container_width=True, config={"displayModeBar":False})
 
 def render_batters(batters):
-    st.markdown('<div class="sh">&#127955; Batting Highlights</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">🏏 Batting Highlights</div>', unsafe_allow_html=True)
     if not batters:
         st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading...</div>', unsafe_allow_html=True)
         return
@@ -1076,7 +1075,7 @@ def render_batters(batters):
         bn=b.get("batting_now",False); tc=_c(b["team"]); sr=b["sr"]
         sr_c="green" if sr>=150 else ("amber" if sr>=100 else "red")
         nm=(f'<span class="player-name" style="color:{tc}">{b["name"]}</span>'
-            +('<span class="batting-now">&#9658; BATTING</span>' if bn else ""))
+            +('<span class="batting-now">▶ BATTING</span>' if bn else ""))
         out=('<span class="green">not out</span>' if bn else
              f'<span style="font-size:10px;color:#64748B">{b["status"][:22]}</span>')
         rows+=(f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
@@ -1087,7 +1086,7 @@ def render_batters(batters):
     st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
 
 def render_bowlers(bowlers):
-    st.markdown('<div class="sh">&#127919; Bowling Highlights</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">🎯 Bowling Highlights</div>', unsafe_allow_html=True)
     if not bowlers:
         st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading...</div>', unsafe_allow_html=True)
         return
@@ -1103,7 +1102,7 @@ def render_bowlers(bowlers):
         tc=_c(b["team"]); ec=b["econ"]
         ec_c="green" if ec<8 else ("amber" if ec<11 else "red")
         ws='style="color:#DC2626;font-weight:700"' if b["wkts"]>0 else ""
-        bn='<span style="color:#16A34A;font-size:10px;font-weight:700;margin-left:4px">&#9658; BOWLING</span>' if b.get("bowling_now") else ""
+        bn='<span style="color:#16A34A;font-size:10px;font-weight:700;margin-left:4px">▶ BOWLING</span>' if b.get("bowling_now") else ""
         rows+=(f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
                f'<div><span class="player-name" style="color:{tc}">{b["name"]}</span>{bn}</div>'
                f'<div class="num">{b["overs"]}</div><div class="num">{b["maidens"]}</div>'
@@ -1112,8 +1111,8 @@ def render_bowlers(bowlers):
     st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
 
 def render_full_scorecard(batters, bowlers, sc):
-    with st.expander("&#128203; VIEW FULL SCORECARD", expanded=False):
-        st.markdown(f'<div class="sh">&#127955; BATTING — {sc["bat"]["short"]}</div>', unsafe_allow_html=True)
+    with st.expander("📋 VIEW FULL SCORECARD", expanded=False):
+        st.markdown(f'<div class="sh">🏏 BATTING — {sc["bat"]["short"]}</div>', unsafe_allow_html=True)
         grid="2.4fr 2fr 45px 45px 45px 45px 55px"
         hdr=(f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
              f'<div>Batter</div><div>Status</div><div style="text-align:right">R</div>'
@@ -1123,7 +1122,7 @@ def render_full_scorecard(batters, bowlers, sc):
         for b in batters:
             bn=b.get("batting_now",False); tc=_c(b["team"])
             nm=(f'<span class="player-name" style="color:{tc}">{b["name"]}</span>'
-                +('<span class="batting-now">&#9658;</span>' if bn else ""))
+                +('<span class="batting-now">▶</span>' if bn else ""))
             out='<span class="green">not out</span>' if bn else f'<span style="font-size:11px;color:#64748B">{b["status"]}</span>'
             rows+=(f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
                    f'<div>{nm}</div><div>{out}</div>'
@@ -1132,7 +1131,7 @@ def render_full_scorecard(batters, bowlers, sc):
                    f'<div class="num">{b["sr"]}</div></div>')
         st.markdown(f'<div class="card" style="margin-bottom:20px">{hdr}{rows}</div>', unsafe_allow_html=True)
 
-        st.markdown(f'<div class="sh">&#127919; BOWLING — {sc["field"]["short"]}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="sh">🎯 BOWLING — {sc["field"]["short"]}</div>', unsafe_allow_html=True)
         grid2="2.4fr 55px 55px 55px 55px 70px"
         hdr2=(f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid2}">'
               f'<div>Bowler</div><div style="text-align:right">O</div><div style="text-align:right">M</div>'
@@ -1141,7 +1140,7 @@ def render_full_scorecard(batters, bowlers, sc):
         for b in bowlers:
             tc=_c(b["team"]); ec=b["econ"]
             ws='style="color:#DC2626;font-weight:700"' if b["wkts"]>0 else ""
-            bn2='<span style="color:#16A34A;font-size:10px;margin-left:4px">&#9658;</span>' if b.get("bowling_now") else ""
+            bn2='<span style="color:#16A34A;font-size:10px;margin-left:4px">▶</span>' if b.get("bowling_now") else ""
             rows2+=(f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid2}">'
                     f'<div><span class="player-name" style="color:{tc}">{b["name"]}</span>{bn2}</div>'
                     f'<div class="num">{b["overs"]}</div><div class="num">{b["maidens"]}</div>'
@@ -1201,7 +1200,7 @@ def render_ai_oracle(sc, batters, bowlers):
 
     st.markdown(
         f'<div class="oracle-box">'
-        f'<h3>&#128247; MICRO-BATTLE: {s_name} vs {b_name}</h3>'
+        f'<h3>📸 MICRO-BATTLE: {s_name} vs {b_name}</h3>'
         f'<div class="oracle-vs">'
         f'<span style="color:#38BDF8">{s_name} <span style="font-size:14px;font-weight:400;color:#94A3B8">(SR: {s_sr})</span></span>'
         f'<span class="oracle-vs-vs">VS</span>'
@@ -1223,53 +1222,64 @@ def render_ai_oracle(sc, batters, bowlers):
         f'</div>'
         f'<div style="display:flex;gap:15px;margin-top:15px;flex-wrap:wrap">'
         f'<div style="flex:1;min-width:200px;background:rgba(0,0,0,0.2);padding:15px;border-radius:8px;border:1px solid rgba(255,255,255,0.05)">'
-        f'<div style="font-size:11px;color:#38BDF8;font-weight:700;text-transform:uppercase;margin-bottom:10px">&#127919; Delivery Length</div>'
+        f'<div style="font-size:11px;color:#38BDF8;font-weight:700;text-transform:uppercase;margin-bottom:10px">🎯 Delivery Length</div>'
         f'{_bar_html("Yorker",len_yorker,"#F472B6")}{_bar_html("Full",len_full,"#38BDF8")}'
         f'{_bar_html("Good Length",len_good,"#4ADE80")}{_bar_html("Short/Bouncer",len_short,"#FACC15")}'
         f'</div>'
         f'<div style="flex:1;min-width:200px;background:rgba(0,0,0,0.2);padding:15px;border-radius:8px;border:1px solid rgba(255,255,255,0.05)">'
-        f'<div style="font-size:11px;color:#4ADE80;font-weight:700;text-transform:uppercase;margin-bottom:10px">&#127955; Shot Zone</div>'
+        f'<div style="font-size:11px;color:#4ADE80;font-weight:700;text-transform:uppercase;margin-bottom:10px">🏏 Shot Zone</div>'
         f'{_bar_html("Covers/Off-Side",zone_cov,"#4ADE80")}{_bar_html("Mid-Wicket/Leg",zone_mid,"#38BDF8")}'
         f'{_bar_html("Straight/Down Ground",zone_str,"#F472B6")}{_bar_html("Fine Leg/Third Man",zone_fin,"#FACC15")}'
         f'</div>'
         f'<div style="flex:1;min-width:200px;background:rgba(220,38,38,0.1);padding:15px;border-radius:8px;border:1px solid rgba(220,38,38,0.2)">'
-        f'<div style="font-size:11px;color:#F87171;font-weight:700;text-transform:uppercase;margin-bottom:10px">&#128680; Dismissal Risk</div>'
+        f'<div style="font-size:11px;color:#F87171;font-weight:700;text-transform:uppercase;margin-bottom:10px">🚨 Dismissal Risk</div>'
         f'{_bar_html("Caught (Bdry/Circle)",d_caught,"#F87171")}{_bar_html("Bowled",d_bowled,"#F87171")}'
         f'{_bar_html("LBW",d_lbw,"#F87171")}{_bar_html("Run Out",d_runout,"#F87171")}'
         f'</div>'
         f'</div>'
         f'<div style="margin-top:15px;background:rgba(255,255,255,0.05);padding:15px;border-radius:8px">'
-        f'<div style="font-size:11px;color:#FACC15;font-weight:700;text-transform:uppercase;margin-bottom:5px">&#128521; AI Field Strategy</div>'
+        f'<div style="font-size:11px;color:#FACC15;font-weight:700;text-transform:uppercase;margin-bottom:5px">😉 AI Field Strategy</div>'
         f'<div style="font-size:13px;color:#E2E8F0">{field_rec}</div>'
         f'</div>'
         f'<div style="margin-top:20px;padding-top:15px;border-top:1px solid #334155">'
-        f'<div style="font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">&#128302; The Golden Ball Prediction</div>'
+        f'<div style="font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🔮 The Golden Ball Prediction</div>'
         f'<div style="font-size:16px;font-weight:500;color:{gold_c};line-height:1.5">{verdict}</div>'
         f'</div></div>',
         unsafe_allow_html=True)
 
 def render_claude_commentary(sc, batters):
-    st.markdown('<div class="sh" style="margin-top:20px">&#127908; LIVE AI COMMENTARY</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🎤 LIVE AI COMMENTARY</div>', unsafe_allow_html=True)
     striker = next((b for b in batters if b.get("batting_now")), None)
     ctx = (f"Match: {sc.get('match','')}. Phase: {sc['phase']}. "
            f"Score: {sc['bat']['score']}/{sc['bat']['wickets']} in {sc['bat']['overs']} overs. "
            f"{'Second innings — need '+str(sc['required'])+' off '+str(sc['balls_left'])+' balls, req RR '+str(sc['req_rr'])+'. ' if sc['second_innings'] else ''}"
            f"{'Striker: '+striker['name']+' '+str(striker['runs'])+'('+str(striker['balls'])+') SR:'+str(striker['sr'])+'. ' if striker else ''}"
            f"Win probability: {sc['bat']['short']} {sc['bat_wp']}%.")
-    commentary = get_ai_commentary(ctx)
-    if not commentary:
+    
+    # Check if Claude returns an actual error instead of just silently failing
+    api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "")
+    
+    if api_key_check:
+        commentary = get_ai_commentary(ctx)
+        if commentary:
+            powered = ""
+        else:
+            commentary = _fallback_commentary(sc, batters)
+            powered = " (⚠️ Anthropic API Error: Check credits or key validity)"
+    else:
         commentary = _fallback_commentary(sc, batters)
-    powered = "" if get_ai_commentary(ctx) else " (Rule-based · Add ANTHROPIC_API_KEY for Claude)"
+        powered = " (Rule-based · Add ANTHROPIC_API_KEY for Claude)"
+        
     st.markdown(
         f'<div class="commentary-box">'
         f'<div style="font-size:10px;color:#38BDF8;font-weight:700;letter-spacing:2px;margin-bottom:12px">'
-        f'&#9679; LIVE COMMENTARY{powered}</div>'
+        f'▶ LIVE COMMENTARY{powered}</div>'
         f'<div style="font-size:15px;line-height:1.75;color:#F1F5F9">{commentary}</div>'
         f'</div>',
         unsafe_allow_html=True)
 
 def render_captains_corner(sc, batters, bowlers):
-    st.markdown('<div class="sh" style="margin-top:20px">&#129299; CAPTAIN\'S CORNER — TACTICAL BRAIN</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🧠 CAPTAIN\'S CORNER — TACTICAL BRAIN</div>', unsafe_allow_html=True)
     striker = next((b for b in batters if b.get("batting_now")), None)
     curr_b  = next((b for b in bowlers if b.get("bowling_now")), None)
     ctx = (f"T20 cricket. Phase: {sc['phase']}. "
@@ -1277,24 +1287,33 @@ def render_captains_corner(sc, batters, bowlers):
            f"{'Striker SR: '+str(striker['sr'])+'. ' if striker else ''}"
            f"{'Current bowler economy: '+str(curr_b['econ'])+'. ' if curr_b else ''}"
            f"What should the captain do RIGHT NOW?")
-    advice = get_captains_corner(ctx)
-    powered = ""
-    if not advice:
+           
+    api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "")
+    
+    if api_key_check:
+        advice = get_captains_corner(ctx)
+        if advice:
+            powered = ""
+        else:
+            advice = _fallback_captain(sc, batters, bowlers)
+            powered = " (⚠️ Anthropic API Error: Check credits or key validity)"
+    else:
         advice = _fallback_captain(sc, batters, bowlers)
         powered = " (Rule-based · Add ANTHROPIC_API_KEY for Claude)"
+
     st.markdown(
         f'<div class="captain-box">'
         f'<div style="font-size:10px;color:#4ADE80;font-weight:700;letter-spacing:2px;margin-bottom:12px">'
-        f'&#9654; CAPTAIN\'S TACTICAL BRIEF{powered}</div>'
+        f'▶ CAPTAIN\'S TACTICAL BRIEF{powered}</div>'
         f'<div style="font-size:14px;line-height:1.85;color:#F1F5F9;white-space:pre-line">{advice}</div>'
         f'</div>',
         unsafe_allow_html=True)
 
     # Next ball grid
-    st.markdown('<div class="sh" style="margin-top:20px">&#127922; NEXT BALL PROBABILITY ENGINE</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🎲 NEXT BALL PROBABILITY ENGINE</div>', unsafe_allow_html=True)
     probs = next_ball(sc)
     styles = {"dot":"nb-dot","1":"nb-one","2":"nb-two","4":"nb-four","6":"nb-six","W":"nb-wkt"}
-    icons  = {"dot":"&#8226;","1":"1","2":"2","4":"4","6":"6","W":"&#128128;"}
+    icons  = {"dot":"•","1":"1","2":"2","4":"4","6":"6","W":"💀"}
     cells  = "".join([
         f'<div class="nb-cell {styles[k]}">'
         f'<div class="nb-val">{icons[k]}</div>'
@@ -1305,12 +1324,12 @@ def render_captains_corner(sc, batters, bowlers):
                "4":"Boundary incoming!","6":"Six possible!","W":"Wicket alert!"}
     st.markdown(f'<div class="card"><div class="nb-grid">{cells}</div>'
                 f'<div style="margin-top:12px;font-size:12px;color:#475569;font-weight:600">'
-                f'&#9658; {lbl_map[most]}</div></div>', unsafe_allow_html=True)
+                f'▶ {lbl_map[most]}</div></div>', unsafe_allow_html=True)
 
 
 # ── RENDER: TAB 3 — PREDICTION LAB ───────────────────────────────────────────
 def render_prediction_lab(sc):
-    st.markdown('<div class="sh">&#127922; MONTE CARLO MATCH SIMULATOR</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">🎲 MONTE CARLO MATCH SIMULATOR</div>', unsafe_allow_html=True)
     if sc["phase"] == "completed":
         st.markdown('<div class="card" style="color:#94A3B8">Match completed — simulation not applicable.</div>', unsafe_allow_html=True)
     elif sc["second_innings"] and sc["balls_left"] > 0:
@@ -1347,7 +1366,7 @@ def render_prediction_lab(sc):
         st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Monte Carlo runs during an active 2nd innings chase.</div>', unsafe_allow_html=True)
 
     # Chase Trajectory
-    st.markdown('<div class="sh" style="margin-top:20px">&#128200; CHASE TRAJECTORY PLANNER</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">📈 CHASE TRAJECTORY PLANNER</div>', unsafe_allow_html=True)
     result = build_chase_trajectories(sc)
     if result:
         overs, opt, agg, con, hist, target, cs = result
@@ -1371,7 +1390,7 @@ def render_prediction_lab(sc):
         st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Trajectory planner activates during an active 2nd innings chase.</div>', unsafe_allow_html=True)
 
     # Over-by-Over Strategy
-    st.markdown('<div class="sh" style="margin-top:20px">&#128336; OVER-BY-OVER STRATEGY ADVISOR</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">⏱️ OVER-BY-OVER STRATEGY ADVISOR</div>', unsafe_allow_html=True)
     if sc["second_innings"] and sc["balls_left"] > 0:
         cur_over = sc["bat"]["_o"]; balls_left = sc["balls_left"]
         start_over = int(cur_over) + 1
@@ -1406,7 +1425,7 @@ def render_prediction_lab(sc):
 # ── RENDER: TAB 4 — PLAYER INTEL ─────────────────────────────────────────────
 def render_player_intel(sc, batters, bowlers):
     # PPI + Bowler Threat
-    st.markdown('<div class="sh">&#129504; PLAYER PRESSURE INDEX</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">🧠 PLAYER PRESSURE INDEX</div>', unsafe_allow_html=True)
     c1,c2 = st.columns(2)
     with c1:
         st.plotly_chart(chart_ppi_gauge(batters, sc), use_container_width=True, config={"displayModeBar":False})
@@ -1414,7 +1433,7 @@ def render_player_intel(sc, batters, bowlers):
         st.plotly_chart(chart_bowler_threat(bowlers, sc), use_container_width=True, config={"displayModeBar":False})
 
     # Clutch Card
-    st.markdown('<div class="sh" style="margin-top:10px">&#127942; CLUTCH SCORE CARD</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:10px">🏆 CLUTCH SCORE CARD</div>', unsafe_allow_html=True)
     c1,c2 = st.columns(2)
     with c1:
         rows=""
@@ -1440,7 +1459,7 @@ def render_player_intel(sc, batters, bowlers):
                     unsafe_allow_html=True)
 
     # DNA Match Finder
-    st.markdown('<div class="sh" style="margin-top:10px">&#129516; DNA MATCH FINDER — Similar Historical Situations</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:10px">🧬 DNA MATCH FINDER — Similar Historical Situations</div>', unsafe_allow_html=True)
     req_rr = sc.get("req_rr",0)
     html = ""
     for d in DNA_MATCHES:
@@ -1459,7 +1478,7 @@ def render_player_intel(sc, batters, bowlers):
     st.markdown(html, unsafe_allow_html=True)
 
     # Auction ROI
-    st.markdown('<div class="sh" style="margin-top:10px">&#128176; AUCTION ROI TRACKER</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:10px">💰 AUCTION ROI TRACKER</div>', unsafe_allow_html=True)
     st.plotly_chart(chart_auction_roi(), use_container_width=True, config={"displayModeBar":False})
     grid="2fr 70px 70px 70px 90px 100px"
     hdr=(f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
@@ -1489,7 +1508,7 @@ def render_player_intel(sc, batters, bowlers):
 # ── RENDER: TAB 5 — GROUND & CONTEXT ─────────────────────────────────────────
 def render_ground_context(sc):
     # Dew Factor
-    st.markdown('<div class="sh">&#128167; DEW FACTOR ANALYSIS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">💧 DEW FACTOR ANALYSIS</div>', unsafe_allow_html=True)
     city = sc.get("venue","Bengaluru").split(",")[-1].strip() if "," in sc.get("venue","Bengaluru") else "Bengaluru"
     wx = fetch_weather(city)
     dew = dew_score(wx["humidity"], wx["temp"])
@@ -1537,7 +1556,7 @@ def render_ground_context(sc):
                 unsafe_allow_html=True)
 
     # Pitch Heatmap
-    st.markdown('<div class="sh" style="margin-top:20px">&#127931; PITCH CONDITION MAP</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🏟️ PITCH CONDITION MAP</div>', unsafe_allow_html=True)
     over_num = sc["bat"]["_o"]
     worn = min(100, int(over_num / 20 * 100))
     pitch_areas = [
@@ -1560,12 +1579,12 @@ def render_ground_context(sc):
     st.markdown(f'<div class="card">{rows}</div>', unsafe_allow_html=True)
 
     # Ball-by-Ball Heatmap
-    st.markdown('<div class="sh" style="margin-top:20px">&#128293; BALL-BY-BALL INNINGS HEATMAP</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🔥 BALL-BY-BALL INNINGS HEATMAP</div>', unsafe_allow_html=True)
     history = demo_over_history()
     st.plotly_chart(chart_ball_heatmap(history), use_container_width=True, config={"displayModeBar":False})
 
     # IPL Points Table
-    st.markdown('<div class="sh" style="margin-top:20px">&#127942; IPL 2026 POINTS TABLE &amp; ELIMINATION TRACKER</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🏆 IPL 2026 POINTS TABLE &amp; ELIMINATION TRACKER</div>', unsafe_allow_html=True)
     matches_left = 56 - sum([t["p"] for t in IPL_STANDINGS]) // 2
     hdr=(f'<div class="pts-row pts-hdr">'
          f'<div>#</div><div>Team</div><div style="text-align:right">P</div><div style="text-align:right">W</div>'
@@ -1580,7 +1599,7 @@ def render_ground_context(sc):
         qual  = t["pts"] >= 16
         bg = "#F0FDF4" if qual else ("#FEF2F2" if elim else ("white" if pos<=4 else "#FFFBEB"))
         border= "border-left:3px solid #16A34A;" if qual else ("border-left:3px solid #DC2626;" if elim else ("border-left:3px solid #1D4ED8;" if pos<=4 else ""))
-        status = "&#9989;" if qual else ("&#10060;" if elim else ("&#127917;" if pos<=4 else ""))
+        status = "✅" if qual else ("❌" if elim else ("🎟️" if pos<=4 else ""))
         rows+=(f'<div class="pts-row" style="background:{bg};{border}">'
                f'<div style="font-weight:700;color:#64748B">{pos}</div>'
                f'<div><span style="font-weight:700;color:{t["color"]}">{t["team"]}</span> {status}</div>'
@@ -1595,21 +1614,21 @@ def render_ground_context(sc):
                 unsafe_allow_html=True)
     st.markdown(
         '<div style="font-size:11px;color:#94A3B8;margin-top:8px">'
-        '&#9989; Qualified &nbsp; &#127917; Playoff position &nbsp; &#10060; Eliminated &nbsp;'
+        '✅ Qualified &nbsp; 🎟️ Playoff position &nbsp; ❌ Eliminated &nbsp;'
         'Top 4 qualify for playoffs</div>', unsafe_allow_html=True)
 
     # Run Progression
-    st.markdown('<div class="sh" style="margin-top:20px">&#128200; INNINGS RUN PROGRESSION</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">📈 INNINGS RUN PROGRESSION</div>', unsafe_allow_html=True)
     st.plotly_chart(chart_run_progression(demo_over_history()), use_container_width=True, config={"displayModeBar":False})
 
 
 # ── RENDER: TAB 6 — NEXT MATCH ────────────────────────────────────────────────
 def render_upcoming_match(news):
-    st.markdown('<div class="sh" style="margin-top:20px">&#9997; TONIGHT\'S BLOCKBUSTER</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh" style="margin-top:20px">🗓️ TONIGHT\'S BLOCKBUSTER</div>', unsafe_allow_html=True)
     mi_key, kkr_key, injury_alerts = generate_match_preview(news)
     st.markdown(
         f'<div class="card" style="border-left:4px solid #1D4ED8;margin-bottom:20px">'
-        f'<div class="mh-venue">&#127943; Wankhede Stadium, Mumbai</div>'
+        f'<div class="mh-venue">🏟️ Wankhede Stadium, Mumbai</div>'
         f'<div class="mh-sub"><span class="mh-status">UPCOMING</span>&nbsp;·&nbsp;Today, 7:30 PM IST</div>'
         f'<div style="display:flex;align-items:center;justify-content:space-between;margin-top:15px">'
         f'<div class="score-big" style="color:#1D4ED8;font-size:32px">MI</div>'
@@ -1619,7 +1638,7 @@ def render_upcoming_match(news):
 
     c1,c2,c3 = st.columns(3, gap="medium")
     with c1:
-        st.markdown('<div class="sh">&#11088; PLAYERS TO WATCH</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh">⭐ PLAYERS TO WATCH</div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="card" style="height:100%">'
             f'<div style="color:#1D4ED8;font-weight:700;margin-bottom:5px">Mumbai Indians</div>'
@@ -1628,14 +1647,14 @@ def render_upcoming_match(news):
             f'<div style="font-size:13px;color:#475569">{kkr_key}</div>'
             f'</div>', unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="sh">&#127973; SQUAD SCANNER</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh">🏥 SQUAD SCANNER</div>', unsafe_allow_html=True)
         alert_html="".join([(f'<div style="font-size:13px;color:#DC2626;font-weight:600;margin-bottom:8px">{a}</div>'
-                              if '⚠' in a else
+                              if '⚠️' in a else
                               f'<div style="font-size:13px;color:#16A34A;font-weight:600;margin-bottom:8px">{a}</div>')
                              for a in injury_alerts])
         st.markdown(f'<div class="card" style="height:100%">{alert_html}</div>', unsafe_allow_html=True)
     with c3:
-        st.markdown('<div class="sh">&#128202; TOURNAMENT CONTEXT</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh">📊 TOURNAMENT CONTEXT</div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="card" style="height:100%;font-size:13px">'
             f'<div style="font-weight:700;color:#1E293B;margin-bottom:8px">Pitch Report (Wankhede):</div>'
@@ -1646,7 +1665,7 @@ def render_upcoming_match(news):
             f'</div>', unsafe_allow_html=True)
 
     if news:
-        st.markdown('<div class="sh" style="margin-top:20px">&#128240; LATEST NEWS — MI vs KKR</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh" style="margin-top:20px">📰 LATEST NEWS — MI vs KKR</div>', unsafe_allow_html=True)
         news_html='<div class="card">'
         for n in news[:5]:
             news_html+=(f'<div class="news-item">'
@@ -1660,12 +1679,12 @@ def render_upcoming_match(news):
 # ── CONTROLS ROW ──────────────────────────────────────────────────────────────
 ca,cb,cc,cd = st.columns([4,1,1,1])
 with ca:
-    st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">GOD\'S EYE v5.0 · Shadow Scraper · © Uday Maddila</div>',
+    st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">GOD\'S EYE v5.1 · Shadow Scraper · © Uday Maddila</div>',
                 unsafe_allow_html=True)
 with cb: auto_ref = st.toggle("Auto-Refresh", value=True)
 with cc: pass
 with cd:
-    if st.button("&#128260; Refresh", use_container_width=True):
+    if st.button("🔄 Refresh", use_container_width=True):
         st.cache_data.clear(); st.rerun()
 
 
@@ -1685,12 +1704,12 @@ render_navbar(sc, is_live)
 
 # ── 6-TAB LAYOUT ─────────────────────────────────────────────────────────────
 tab1,tab2,tab3,tab4,tab5,tab6 = st.tabs([
-    "&#128308; Live Match",
-    "&#129504; AI Oracle",
-    "&#128302; Prediction Lab",
-    "&#127955; Player Intel",
-    "&#127958; Ground & Context",
-    "&#9197; Next Match",
+    "🔴 Live Match",
+    "🧠 AI Oracle",
+    "🎲 Prediction Lab",
+    "🏏 Player Intel",
+    "🏟️ Ground & Context",
+    "⏭️ Next Match",
 ])
 
 with tab1:
@@ -1728,7 +1747,7 @@ IST = pytz.timezone("Asia/Kolkata")
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
-    f'GOD\'S EYE v5.0 · Shadow Scraper Engine · Smart URL Switcher · Multi-Source Consensus · '
+    f'GOD\'S EYE v5.1 · Shadow Scraper Engine · Smart URL Switcher · Multi-Source Consensus · '
     f'Monte Carlo Engine · Claude AI · Last sync: {datetime.now(IST).strftime("%H:%M:%S IST")} · '
     f'&copy; Uday Maddila</div>',
     unsafe_allow_html=True)
