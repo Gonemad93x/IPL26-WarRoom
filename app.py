@@ -1,7 +1,7 @@
 """
-GOD'S EYE v4.4 — IPL LIVE MATCH CENTER (AI ORACLE)
+GOD'S EYE v4.5 — IPL LIVE MATCH CENTER (GOD TIER)
 Operator : Uday Maddila
-Update: Added Tab 3 (AI Oracle) for ball-by-ball micro-predictions based on SR & Econ.
+Update: Expanded AI Oracle to multi-directional analytics & reordered tabs.
 """
 
 import streamlit as st
@@ -192,6 +192,16 @@ def _layout(**kw):
     d.update(kw)
     return d
 
+def _ax(title="", sfx="", rng=None, **kw):
+    d = dict(title=title, showgrid=True, gridcolor="#F1F5F9", zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0")
+    if sfx: d["ticksuffix"] = sfx
+    if rng: d["range"] = rng
+    d.update(kw)
+    return d
+
+def _ax2(title=""):
+    return dict(title=title, showgrid=False, zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0", overlaying="y", side="right")
+
 
 # ── WIN PROBABILITY MODELS ────────────────────────────────────────────────────
 def _win_prob_2nd(r, w, o, target, total=20):
@@ -259,8 +269,10 @@ def resolve_scraper():
         except: return None
 
     live_status = scrape_espn()
+    
     if live_status and ("CRR" in live_status or "Live" in live_status):
         pass 
+        
     return _get_last_match()
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -347,6 +359,42 @@ def chart_momentum(ov, wp, rr, req):
     fig.update_layout(**_layout(title=dict(text="MOMENTUM WORM", font=dict(size=11,color="#1E293B",weight="bold"),x=0), height=220, margin=dict(l=0, r=0, t=30, b=0)))
     return fig
 
+
+# ── PREDICTION ────────────────────────────────────────────────────────────────
+def build_prediction(sc, batters, bowlers):
+    bat  = sc["bat"]
+    two  = sc["second_innings"]
+    bwp  = sc["bat_wp"]
+    fwp  = sc["fld_wp"]
+    
+    if sc["phase"] == "completed":
+         return "🏆 Match Concluded", "green", (
+             f"**{sc['status']}**. "
+             f"A dominant performance securing the victory.")
+
+    if not two:
+        crr  = _float(bat["rr"])
+        o    = bat["_o"]
+        bu   = int(o)*6 + round((o%1)*10)
+        bl   = max(1, 120-bu)
+        proj = bat["_r"] + round(crr * bl/6 * 0.9) 
+        if crr >= 10:
+            return "🔥 Explosive Start", "green", (f"**{bat['short']}** are on fire at **{crr}** RPO. Projected total: **~{proj}**.")
+        elif crr >= 8:
+            return "✅ Solid Platform", "green", (f"**{bat['short']}** building well at **{crr}** RPO. Projected total: **~{proj}**.")
+        else:
+            return "⚠️ Below Par", "amber", (f"**{bat['short']}** scoring at **{crr}** RPO — below T20 par. Projected total: **~{proj}**.")
+    else:
+        rn  = sc["required"]; bl = sc["balls_left"]; rr = sc["req_rr"]
+        wl  = 10 - bat["_w"]
+        bpw = round(bl/max(1,wl), 1) if wl > 0 else 0
+        if bwp >= 65:
+            return "🟢 Chase On Track", "green", (f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. **{wl} wickets** in hand (~{bpw} balls/wkt).")
+        elif bwp >= 45:
+            return "🟡 Finely Balanced", "amber", (f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. **{wl} wickets** remaining.")
+        else:
+            return "🔴 Under Pressure", "red", (f"Need **{rn}** off **{bl}** balls · steep req rate of **{rr}**. Only **{wl} wickets** left.")
+
 # ── RENDER FUNCTIONS ──────────────────────────────────────────────────────────
 def render_navbar(sc, is_live):
     IST = pytz.timezone('Asia/Kolkata')
@@ -354,11 +402,11 @@ def render_navbar(sc, is_live):
     lb  = '<span style="background:#DC2626;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-right:8px">LIVE</span>' if is_live else ""
     st.markdown(
         f'<div class="navbar">'
-        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v4.4 '
+        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v4.5 '
         f'<span style="font-size:11px;color:#94A3B8;font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div class="navbar-sub">{lb}{sc.get("match","")}</div></div>'
         f'<div class="navbar-right">{now}<br>'
-        f'<span style="color:#4ADE80">AI Oracle Engine Active</span><br>'
+        f'<span style="color:#4ADE80">Tactical Engine Active</span><br>'
         f'<span style="color:#94A3B8">OPERATOR: UDAY MADDILA</span></div>'
         f'</div>', unsafe_allow_html=True)
 
@@ -652,6 +700,131 @@ def render_full_scorecard(batters, bowlers, sc):
                      f'<div class="num">{ec}</div></div>')
         st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
 
+# ── INJECTED: V4.5 EXPANDED AI ORACLE ─────────────────────────────────────────
+def render_ai_oracle(sc, batters, bowlers):
+    st.markdown('<div class="sh" style="margin-top:20px">&#9672; MICRO-BATTLE SIMULATOR (NEXT BALL)</div>', unsafe_allow_html=True)
+    
+    striker = next((b for b in batters if b.get("batting_now")), batters[0] if batters else None)
+    current_bowler = next((b for b in bowlers if b.get("bowling_now")), bowlers[0] if bowlers else None)
+
+    if not striker or not current_bowler:
+        st.info("Live player data unavailable for micro-predictions.")
+        return
+
+    s_name = striker['name']; s_sr = striker['sr']; s_runs = striker['runs']
+    b_name = current_bowler['name']; b_econ = current_bowler['econ']; b_ov = current_bowler['overs']
+    phase = sc["phase"]
+
+    # AI Logic: Bowler Intent
+    if phase == "death": b_intent = "Wide Yorker / Slower Bouncer"; pace_pct = 40; var_pct = 60
+    elif phase == "powerplay": b_intent = "Hard Length / Swing"; pace_pct = 80; var_pct = 20
+    else: b_intent = "Good Length / Stump-to-Stump"; pace_pct = 60; var_pct = 40
+    
+    if b_econ < 6.0: b_intent += " (Highly Defensive)"
+    elif b_econ > 10.0: b_intent += " (Under Pressure, Expect Variation)"
+
+    # AI Logic: Batter Intent
+    if s_sr > 160: bat_intent = "Aggressive Aerial / Clear the Ropes"; atk_pct = 85; def_pct = 15
+    elif s_sr > 120: bat_intent = "Strike Rotation / Find the Gaps"; atk_pct = 55; def_pct = 45
+    else: bat_intent = "Consolidation / See Off the Over"; atk_pct = 30; def_pct = 70
+
+    # Multi-Directional Predictions Logic
+    len_yorker = 30 if phase == "death" else 5
+    len_full = 15 if phase == "death" else 25
+    len_good = 25 if phase == "death" else 55
+    len_short = 30 if phase == "death" else 15
+    
+    zone_cov = 35; zone_mid = 40; zone_fin = 15; zone_str = 10
+    if b_econ > 9.0: zone_str = 30; zone_mid = 35; zone_cov = 25; zone_fin = 10
+
+    d_caught = 60; d_bowled = 20; d_lbw = 15; d_runout = 5
+    if phase == "death": d_caught = 75; d_bowled = 15; d_lbw = 5
+
+    if s_sr > 160: field_rec = "Deep point and Long-off on the boundary. Bring fine leg inside the circle."
+    elif b_econ < 6.0: field_rec = "Attacking infield. Slip in place, cover saving the single."
+    else: field_rec = "Standard T20 sweeping field. Protect square boundaries."
+
+    if s_sr > 160 and b_econ < 6.5:
+        verdict = f"High-risk collision. {s_name} is striking aggressively, but {b_name} is bowling tight. Expect a high-variance outcome (Boundary or Wicket)."
+        gold_color = "#D97706"
+    elif s_sr > 150:
+        verdict = f"{s_name} has the upper hand. Expecting an attacking shot targeting the boundaries against {b_name}."
+        gold_color = "#16A34A"
+    elif b_econ < 6.0:
+        verdict = f"{b_name} is dominating this spell. Expect {s_name} to struggle to find timing. Dot ball or single highly likely."
+        gold_color = "#DC2626"
+    else:
+        verdict = f"Neutral state. Expect a standard delivery pushing for a single to rotate strike."
+        gold_color = "#38BDF8"
+
+    def _bar(lbl, pct, c):
+        return f'<div style="margin-bottom:6px"><div style="display:flex; justify-content:space-between; font-size:10px; color:#94A3B8; margin-bottom:2px"><span>{lbl}</span><span>{pct}%</span></div><div class="pbar" style="background:rgba(255,255,255,0.1); height:6px; margin:0;"><div class="pbar-fill" style="width:{pct}%; background:{c};"></div></div></div>'
+
+    st.markdown(
+        f'<div class="oracle-box">'
+        f'<h3>LIVE HEAD-TO-HEAD ANALYSIS</h3>'
+        f'<div class="oracle-vs">'
+        f'<span style="color:#38BDF8">{s_name} <span style="font-size:14px; font-weight:400; color:#94A3B8;">(SR: {s_sr})</span></span>'
+        f'<span class="oracle-vs-vs">VS</span>'
+        f'<span style="color:#F472B6">{b_name} <span style="font-size:14px; font-weight:400; color:#94A3B8;">(Econ: {b_econ})</span></span>'
+        f'</div>'
+        
+        f'<div style="display:flex; gap:15px; margin-top:20px; flex-wrap:wrap;">'
+        f'<div style="flex:1; min-width:250px; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
+        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; margin-bottom:5px;">Batter Intent Profile</div>'
+        f'<div style="font-size:14px; font-weight:600; color:white; margin-bottom:10px;">{bat_intent}</div>'
+        f'<div style="display:flex; justify-content:space-between; font-size:10px; color:#CBD5E1;"><span>Attack ({atk_pct}%)</span><span>Defend/Rotate ({def_pct}%)</span></div>'
+        f'<div class="intent-bar"><div class="intent-fill" style="width:{atk_pct}%; background:#38BDF8;"></div><div class="intent-fill" style="width:{def_pct}%; background:#475569;"></div></div>'
+        f'</div>'
+
+        f'<div style="flex:1; min-width:250px; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
+        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; margin-bottom:5px;">Bowler Tactical Profile</div>'
+        f'<div style="font-size:14px; font-weight:600; color:white; margin-bottom:10px;">{b_intent}</div>'
+        f'<div style="display:flex; justify-content:space-between; font-size:10px; color:#CBD5E1;"><span>Pace/Stock ({pace_pct}%)</span><span>Variation ({var_pct}%)</span></div>'
+        f'<div class="intent-bar"><div class="intent-fill" style="width:{pace_pct}%; background:#F472B6;"></div><div class="intent-fill" style="width:{var_pct}%; background:#475569;"></div></div>'
+        f'</div>'
+        f'</div>'
+
+        f'<div style="display:flex; gap:15px; margin-top:15px; flex-wrap:wrap;">'
+        
+        f'<div style="flex:1; min-width:200px; background:rgba(0,0,0,0.2); padding:15px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">'
+        f'<div style="font-size:11px; color:#38BDF8; font-weight:700; text-transform:uppercase; margin-bottom:10px;">🎯 Predicted Delivery Length</div>'
+        f'{_bar("Yorker", len_yorker, "#F472B6")}'
+        f'{_bar("Full", len_full, "#38BDF8")}'
+        f'{_bar("Good Length", len_good, "#4ADE80")}'
+        f'{_bar("Short / Bouncer", len_short, "#FACC15")}'
+        f'</div>'
+
+        f'<div style="flex:1; min-width:200px; background:rgba(0,0,0,0.2); padding:15px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">'
+        f'<div style="font-size:11px; color:#4ADE80; font-weight:700; text-transform:uppercase; margin-bottom:10px;">🏏 Predicted Shot Zone</div>'
+        f'{_bar("Covers / Off-Side", zone_cov, "#4ADE80")}'
+        f'{_bar("Mid-Wicket / Leg-Side", zone_mid, "#38BDF8")}'
+        f'{_bar("Straight / Down Ground", zone_str, "#F472B6")}'
+        f'{_bar("Fine Leg / Third Man", zone_fin, "#FACC15")}'
+        f'</div>'
+
+        f'<div style="flex:1; min-width:200px; background:rgba(220,38,38,0.1); padding:15px; border-radius:8px; border:1px solid rgba(220,38,38,0.2);">'
+        f'<div style="font-size:11px; color:#F87171; font-weight:700; text-transform:uppercase; margin-bottom:10px;">🚨 Dismissal Risk Matrix</div>'
+        f'{_bar("Caught (Boundary/Circle)", d_caught, "#F87171")}'
+        f'{_bar("Bowled", d_bowled, "#F87171")}'
+        f'{_bar("LBW", d_lbw, "#F87171")}'
+        f'{_bar("Run Out", d_runout, "#F87171")}'
+        f'</div>'
+
+        f'</div>' 
+
+        f'<div style="margin-top:15px; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
+        f'<div style="font-size:11px; color:#FACC15; font-weight:700; text-transform:uppercase; margin-bottom:5px;">🛡️ AI Field Strategy Recommendation</div>'
+        f'<div style="font-size:13px; color:#E2E8F0;">{field_rec}</div>'
+        f'</div>'
+        
+        f'<div style="margin-top:20px; padding-top:15px; border-top:1px solid #334155;">'
+        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">🔮 The Golden Ball Prediction</div>'
+        f'<div style="font-size:16px; font-weight:500; color:{gold_color}; line-height:1.5;">{verdict}</div>'
+        f'</div>'
+        f'</div>', unsafe_allow_html=True
+    )
+
 def render_upcoming_match(news):
     st.markdown('<div class="sh" style="margin-top:20px">&#9672; TONIGHT\'S BLOCKBUSTER</div>', unsafe_allow_html=True)
     mi_key, kkr_key, win_prob, injury_alerts = generate_match_preview(news)
@@ -696,91 +869,11 @@ def render_upcoming_match(news):
             f'</div>', unsafe_allow_html=True
         )
 
-# ── INJECTED: V4.4 AI ORACLE ──────────────────────────────────────────────────
-def render_ai_oracle(sc, batters, bowlers):
-    st.markdown('<div class="sh" style="margin-top:20px">&#9672; MICRO-BATTLE SIMULATOR (NEXT BALL)</div>', unsafe_allow_html=True)
-    
-    # Identify Active Striker and Bowler
-    striker = next((b for b in batters if b.get("batting_now")), batters[0] if batters else None)
-    current_bowler = next((b for b in bowlers if b.get("bowling_now")), bowlers[0] if bowlers else None)
-
-    if not striker or not current_bowler:
-        st.info("Live player data unavailable for micro-predictions.")
-        return
-
-    s_name = striker['name']; s_sr = striker['sr']; s_runs = striker['runs']
-    b_name = current_bowler['name']; b_econ = current_bowler['econ']; b_ov = current_bowler['overs']
-    phase = sc["phase"]
-
-    # AI Logic: Bowler Intent
-    if phase == "death": b_intent = "Wide Yorker / Slower Bouncer"; pace_pct = 40; var_pct = 60
-    elif phase == "powerplay": b_intent = "Hard Length / Swing"; pace_pct = 80; var_pct = 20
-    else: b_intent = "Good Length / Stump-to-Stump"; pace_pct = 60; var_pct = 40
-    
-    if b_econ < 6.0: b_intent += " (Highly Defensive)"
-    elif b_econ > 10.0: b_intent += " (Under Pressure, Expect Variation)"
-
-    # AI Logic: Batter Intent
-    if s_sr > 160: bat_intent = "Aggressive Aerial / Clear the Ropes"; atk_pct = 85; def_pct = 15
-    elif s_sr > 120: bat_intent = "Strike Rotation / Find the Gaps"; atk_pct = 55; def_pct = 45
-    else: bat_intent = "Consolidation / See Off the Over"; atk_pct = 30; def_pct = 70
-
-    # The Golden Prediction
-    if s_sr > 160 and b_econ < 6.5:
-        verdict = f"High-risk collision. {s_name} is striking aggressively, but {b_name} is bowling tight. Expect a high-variance outcome (Boundary or Wicket)."
-        gold_color = "#D97706"
-    elif s_sr > 150:
-        verdict = f"{s_name} has the upper hand. Expecting an attacking shot targeting the boundaries against {b_name}."
-        gold_color = "#16A34A"
-    elif b_econ < 6.0:
-        verdict = f"{b_name} is dominating this spell. Expect {s_name} to struggle to find timing. Dot ball or single highly likely."
-        gold_color = "#DC2626"
-    else:
-        verdict = f"Neutral state. Expect a standard delivery pushing for a single to rotate strike."
-        gold_color = "#38BDF8"
-
-    # UI Rendering
-    st.markdown(
-        f'<div class="oracle-box">'
-        f'<h3>LIVE HEAD-TO-HEAD ANALYSIS</h3>'
-        f'<div class="oracle-vs">'
-        f'<span style="color:#38BDF8">{s_name} <span style="font-size:14px; font-weight:400; color:#94A3B8;">(SR: {s_sr})</span></span>'
-        f'<span class="oracle-vs-vs">VS</span>'
-        f'<span style="color:#F472B6">{b_name} <span style="font-size:14px; font-weight:400; color:#94A3B8;">(Econ: {b_econ})</span></span>'
-        f'</div>'
-        f'<div style="display:flex; gap:20px; margin-top:20px;">'
-        
-        # Batter Card
-        f'<div style="flex:1; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
-        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; margin-bottom:5px;">Batter Intent Profile</div>'
-        f'<div style="font-size:14px; font-weight:600; color:white; margin-bottom:10px;">{bat_intent}</div>'
-        f'<div style="display:flex; justify-content:space-between; font-size:10px; color:#CBD5E1;"><span>Attack ({atk_pct}%)</span><span>Defend/Rotate ({def_pct}%)</span></div>'
-        f'<div class="intent-bar"><div class="intent-fill" style="width:{atk_pct}%; background:#38BDF8;"></div><div class="intent-fill" style="width:{def_pct}%; background:#475569;"></div></div>'
-        f'</div>'
-
-        # Bowler Card
-        f'<div style="flex:1; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
-        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; margin-bottom:5px;">Bowler Tactical Profile</div>'
-        f'<div style="font-size:14px; font-weight:600; color:white; margin-bottom:10px;">{b_intent}</div>'
-        f'<div style="display:flex; justify-content:space-between; font-size:10px; color:#CBD5E1;"><span>Pace/Stock ({pace_pct}%)</span><span>Variation ({var_pct}%)</span></div>'
-        f'<div class="intent-bar"><div class="intent-fill" style="width:{pace_pct}%; background:#F472B6;"></div><div class="intent-fill" style="width:{var_pct}%; background:#475569;"></div></div>'
-        f'</div>'
-        
-        f'</div>'
-        
-        # Golden Prediction 
-        f'<div style="margin-top:20px; padding-top:15px; border-top:1px solid #334155;">'
-        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">🔮 The Golden Ball Prediction</div>'
-        f'<div style="font-size:16px; font-weight:500; color:{gold_color}; line-height:1.5;">{verdict}</div>'
-        f'</div>'
-        f'</div>', unsafe_allow_html=True
-    )
-
 # ── CONTROLS ──────────────────────────────────────────────────────────────────
 ca, cb, cc, cd, ce = st.columns([3,1,1,1,1])
 with ca:
     st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">'
-                "GOD'S EYE v4.4 · © Uday Maddila</div>", unsafe_allow_html=True)
+                "GOD'S EYE v4.5 · © Uday Maddila</div>", unsafe_allow_html=True)
 with cb: auto_ref  = st.toggle("Auto-Refresh", value=True)
 with cc: pass 
 with cd: pass 
@@ -797,8 +890,8 @@ is_live = sc["phase"] != "completed"
 
 render_navbar(sc, is_live)
 
-# --- TABBED VIEW V4.4 ---
-tab1, tab2, tab3 = st.tabs(["🔴 Live/Recent Match", "⏭️ Next Match Preview", "🧠 AI Oracle (Predictive)"])
+# --- TABBED VIEW V4.5 ---
+tab1, tab2, tab3 = st.tabs(["🔴 Live/Recent Match", "🧠 AI Oracle (Predictive)", "⏭️ Next Match Preview"])
 
 with tab1:
     render_scoreboard(sc)
@@ -814,16 +907,16 @@ with tab1:
     render_full_scorecard(batters, bowlers, sc)
 
 with tab2:
-    render_upcoming_match(upcoming_news)
+    # V4.5 Expanded Micro-prediction Engine
+    render_ai_oracle(sc, batters, bowlers)
 
 with tab3:
-    # V4.4 Micro-prediction Engine
-    render_ai_oracle(sc, batters, bowlers)
+    render_upcoming_match(upcoming_news)
 
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
-    f'GOD\'S EYE v4.4 · Data Engine: Direct Web Scraper · '
+    f'GOD\'S EYE v4.5 · Data Engine: Direct Web Scraper · '
     f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
     f'© Uday Maddila</div>',
     unsafe_allow_html=True)
