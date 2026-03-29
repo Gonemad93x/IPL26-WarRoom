@@ -803,7 +803,7 @@ def chart_ppi_gauge(batters, sc):
     names, ppis, colors = [], [], []
     for b in batters[:6]:
         ppi = compute_ppi(b, sc)
-        lbl, clr, _ = ppi_label(ppi)
+        lbl, clr = ppi_label(ppi) # FIX: Unpack 2 values, not 3
         names.append(b["name"].split()[-1])
         ppis.append(ppi)
         colors.append(clr)
@@ -923,7 +923,7 @@ def render_scoreboard(sc):
         s=bat["score"]; w=bat["wickets"]; o=bat["overs"]; rr=bat["rr"]; drs=sc.get("drs",{}).get("bat",0)
         st.markdown(
             f'<div class="score-card" style="border-left:4px solid {bc}">'
-            f'<div class="team-badge" style="color:{bc}">&#9658; {bat["short"]} (DRS: {drs})</div>'
+            f'<div class="team-badge" style="color:{bc}">▶ {bat["short"]} (DRS: {drs})</div>'
             f'<div class="score-big" style="color:{bc}">{s}/{w}</div>'
             f'<div class="score-detail">{o} Ov &nbsp;·&nbsp; CRR: <b>{rr}</b></div>'
             f'</div>', unsafe_allow_html=True)
