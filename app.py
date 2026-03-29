@@ -1,7 +1,7 @@
 """
-GOD'S EYE v4.1 — IPL LIVE MATCH CENTER (PREDICTIVE SCANNER)
+GOD'S EYE v4.2 — IPL LIVE MATCH CENTER (GOD TIER)
 Operator : Uday Maddila
-Update: Added Tabbed View for Next Match Previews + Real-Time News/Injury Scanner.
+Update: Injected Tactical Layer (Timeline, DRS, Worm) & Strategic Layer (Pitch, Standings).
 """
 
 import streamlit as st
@@ -12,6 +12,8 @@ from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
 import concurrent.futures
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="GOD'S EYE | IPL 2026", page_icon="🏏",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -60,9 +62,10 @@ div.block-container{padding:0.8rem 1.8rem 2rem!important;max-width:1440px;}
 .score-big{font-size:44px;font-weight:700;line-height:1;}
 .score-detail{font-size:13px;color:#64748B;margin-top:5px;}
 
-/* Progress bar */
+/* Progress bar & Sub-bars */
 .pbar{height:8px;background:#E2E8F0;border-radius:4px;overflow:hidden;margin:5px 0;}
 .pbar-fill{height:100%;border-radius:4px;}
+.split-bar{display:flex; height:6px; border-radius:3px; overflow:hidden; margin-top:4px;}
 
 /* Phase badge */
 .ph-pp{background:#DBEAFE;color:#1D4ED8;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:700;letter-spacing:1px;}
@@ -106,7 +109,7 @@ div.block-container{padding:0.8rem 1.8rem 2rem!important;max-width:1440px;}
 .pred-title{font-size:15px;font-weight:700;color:#1E293B;margin-bottom:8px;}
 .pred-body{font-size:13px;color:#374151;line-height:1.7;}
 
-/* Next ball grid */
+/* Next ball grid & Over Timeline */
 .nb-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px;}
 .nb-cell{text-align:center;padding:12px 4px;border-radius:8px;border:2px solid;font-weight:700;}
 .nb-dot{border-color:#CBD5E1;background:#F8FAFC;color:#64748B;}
@@ -118,6 +121,12 @@ div.block-container{padding:0.8rem 1.8rem 2rem!important;max-width:1440px;}
 .nb-val{font-size:22px;margin-bottom:4px;}
 .nb-lbl{font-size:10px;font-weight:700;letter-spacing:1px;}
 .nb-pct{font-size:13px;font-weight:700;margin-top:2px;}
+
+.timeline-box { display: flex; gap: 8px; align-items: center; margin-top: 5px; flex-wrap: wrap; }
+.ball-badge { width: 32px; height: 32px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-weight: 700; font-size: 13px; background: #F8FAFC; border: 1px solid #E2E8F0; color: #475569; }
+.ball-w { background: #FEF2F2; border-color: #FCA5A5; color: #DC2626; }
+.ball-4 { background: #ECFDF5; border-color: #6EE7B7; color: #059669; }
+.ball-6 { background: #F5F3FF; border-color: #C4B5FD; color: #7C3AED; }
 
 /* News */
 .news-item{padding:10px 0;border-bottom:1px solid #F1F5F9;}
@@ -136,7 +145,7 @@ div[data-testid="stTabs"] button[aria-selected="true"] {color: #1D4ED8; border-b
 </style>
 """, unsafe_allow_html=True)
 
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+# ── HELPERS & PLOTLY LAYOUTS ──────────────────────────────────────────────────
 TEAM_COLORS = {
     "RCB":"#DC2626","SRH":"#D97706","MI":"#1D4ED8","CSK":"#F59E0B",
     "KKR":"#7C3AED","RR":"#EC4899","DC":"#2563EB","PBKS":"#DC2626",
@@ -166,6 +175,24 @@ def _float(v, d=0.0):
     try: return float(str(v).strip())
     except: return d
 
+def _layout(**kw):
+    return dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Inter, sans-serif", color="#475569", size=11),
+                margin=dict(l=10, r=10, t=34, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"), **kw)
+
+def _ax(title="", sfx="", rng=None, **kw):
+    d = dict(title=title, showgrid=True, gridcolor="#F1F5F9", zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0")
+    if sfx: d["ticksuffix"] = sfx
+    if rng: d["range"] = rng
+    d.update(kw)
+    return d
+
+def _ax2(title=""):
+    return dict(title=title, showgrid=False, zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0", overlaying="y", side="right")
+
+
+# ── WIN PROBABILITY MODELS ────────────────────────────────────────────────────
 def _win_prob_2nd(r, w, o, target, total=20):
     if target <= 0: return 50, 50
     bu = int(o)*6 + round((o%1)*10)
@@ -218,6 +245,7 @@ def next_ball(sc):
     tot  = sum(d[k] for k in keys)
     return {k: max(1, round(d[k]/tot*100)) for k in keys}
 
+
 # ── THE SHADOW SCRAPER ENGINE ────────────────────────────────────────────────
 @st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
 def resolve_scraper():
@@ -239,8 +267,7 @@ def resolve_scraper():
 @st.cache_data(ttl=120, show_spinner=False)
 def _fetch_news():
     try:
-        feed = feedparser.parse(
-            "https://news.google.com/rss/search?q=IPL+2026+Live+Updates&hl=en-IN&gl=IN&ceid=IN:en")
+        feed = feedparser.parse("https://news.google.com/rss/search?q=IPL+2026+Live+Updates&hl=en-IN&gl=IN&ceid=IN:en")
         return [{"title":e.get("title",""),"source":e.get("source",{}).get("title",""),
                  "published":e.get("published","")[:22],"link":e.get("link","#")}
                 for e in feed.entries[:7]]
@@ -248,35 +275,29 @@ def _fetch_news():
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_upcoming_news():
-    """Fetches news specifically targeted at the next MI vs KKR match for injury scanning."""
     try:
         feed = feedparser.parse("https://news.google.com/rss/search?q=IPL+2026+MI+vs+KKR+injury+playing+11&hl=en-IN&gl=IN&ceid=IN:en")
         return [{"title":e.get("title",""),"source":e.get("source",{}).get("title",""),"link":e.get("link","#")} for e in feed.entries[:5]]
     except: return []
 
 def generate_match_preview(news):
-    """Analyzes upcoming match news to generate dynamic injury alerts and player watchlists."""
     mi_key = "Suryakumar Yadav (Bat), Jasprit Bumrah (Bowl)"
     kkr_key = "Shreyas Iyer (Bat), Sunil Narine (All-round)"
     win_prob = "MI 55% - KKR 45% (Wankhede advantage)"
-    
     news_text = " ".join([n["title"].lower() for n in news])
     injury_alerts = []
     
     if any(w in news_text for w in ["injury", "ruled out", "miss", "doubtful"]):
-        if "hardik" in news_text:
-            injury_alerts.append("⚠️ Hardik Pandya's fitness is a concern based on latest reports.")
-        if "starc" in news_text:
-            injury_alerts.append("⚠️ Mitchell Starc might be doubtful for tonight's clash.")
-        if "shreyas" in news_text:
-            injury_alerts.append("⚠️ Watch out for updates on Shreyas Iyer's availability.")
+        if "hardik" in news_text: injury_alerts.append("⚠️ Hardik Pandya's fitness is a concern based on latest reports.")
+        if "starc" in news_text: injury_alerts.append("⚠️ Mitchell Starc might be doubtful for tonight's clash.")
+        if "shreyas" in news_text: injury_alerts.append("⚠️ Watch out for updates on Shreyas Iyer's availability.")
             
     if not injury_alerts:
         injury_alerts.append("✅ SQUAD CLEAR: No major new injuries reported in the top feeds. Both teams likely to field full-strength XIs.")
         
     return mi_key, kkr_key, win_prob, injury_alerts
 
-# ── ACCURATE HISTORICAL FALLBACK ──────────────────────────────────────────────
+# ── ACCURATE HISTORICAL FALLBACK (WITH TACTICAL DATA) ────────────────────────
 def _get_last_match():
     srh = {"name":"Sunrisers Hyderabad","short":"SRH","score":"201","wickets":"9",
            "overs":"20.0","rr":"10.05","_r":201,"_w":9,"_o":20.0}
@@ -286,7 +307,10 @@ def _get_last_match():
     sc  = {"match":"SRH vs RCB","venue":"M. Chinnaswamy Stadium, Bengaluru",
            "status":"RCB won by 6 wickets (with 26 balls remaining)","bat":rcb,"field":srh,"t1":srh,"t2":rcb,
            "target":202,"required":0,"req_rr":0.00,"balls_left":0,
-           "phase":"completed","second_innings":True,"bat_wp":100,"fld_wp":0}
+           "phase":"completed","second_innings":True,"bat_wp":100,"fld_wp":0,
+           "recent_balls": ["1", "1", "4", "W", "2", "6", "1"],
+           "drs": {"bat": 2, "fld": 1},
+           "impact": {"bat": "Activated (Patidar)", "fld": "Available"}}
     
     bat = [
         {"name":"Ishan Kishan","team":"RCB","runs":80,"balls":38,"sr":210.52,"4s":7,"6s":5,
@@ -302,8 +326,25 @@ def _get_last_match():
         {"name":"Jacob Duffy","team":"RCB","overs":4.0,"runs":22,"wkts":3,"maidens":0,"econ":5.50,"bowling_now":False},
     ]
     extras = {"wides":0,"noballs":0,"legbyes":0,"byes":0,"total":0}
-    partner= {"balls":0,"runs":0}
+    partner= {"balls":25,"runs":48,"p1_name":"Ishan", "p1_runs":34, "p2_name":"Patidar", "p2_runs":14} # Split added
+    
     return sc, bat, bowl, extras, partner
+
+def demo_momentum():
+    ov = list(range(1, 16))
+    wp = [50, 48, 45, 52, 58, 65, 62, 70, 75, 82, 85, 88, 92, 95, 100]
+    rr = [8.0, 9.5, 9.0, 10.5, 11.2, 11.5, 11.0, 11.8, 12.2, 12.5, 12.3, 12.8, 13.1, 13.0, 12.95]
+    req = [10.2, 10.1, 10.3, 10.0, 9.8, 9.5, 9.7, 9.2, 8.8, 8.2, 7.8, 7.0, 6.2, 5.0, 0.0]
+    return ov, wp, rr, req
+
+def chart_momentum(ov, wp, rr, req):
+    fig = make_subplots(specs=[[{"secondary_y":True}]])
+    fig.add_trace(go.Scatter(x=ov, y=wp, name="RCB Win %", mode="lines", line=dict(color="#DC2626",width=3,shape="spline"), fill="tozeroy", fillcolor="rgba(220,38,38,0.1)"), secondary_y=False)
+    fig.add_trace(go.Scatter(x=ov, y=rr, name="Actual RR", mode="lines", line=dict(color="#1D4ED8",width=2,dash="dot")), secondary_y=True)
+    fig.add_trace(go.Scatter(x=ov, y=req, name="Req RR", mode="lines", line=dict(color="#94A3B8",width=2,dash="dash")), secondary_y=True)
+    fig.update_layout(**_layout(title=dict(text="MOMENTUM WORM", font=dict(size=11,color="#1E293B",weight="bold"),x=0), height=220, margin=dict(l=0, r=0, t=30, b=0)))
+    return fig
+
 
 # ── PREDICTION ────────────────────────────────────────────────────────────────
 def build_prediction(sc, batters, bowlers):
@@ -324,39 +365,21 @@ def build_prediction(sc, batters, bowlers):
         bl   = max(1, 120-bu)
         proj = bat["_r"] + round(crr * bl/6 * 0.9) 
         if crr >= 10:
-            return "🔥 Explosive Start", "green", (
-                f"**{bat['short']}** are on fire at **{crr}** RPO. "
-                f"Projected total: **~{proj}** — a difficult target. "
-                f"Win probability: **{fwp}%** for the fielding side.")
+            return "🔥 Explosive Start", "green", (f"**{bat['short']}** are on fire at **{crr}** RPO. Projected total: **~{proj}**.")
         elif crr >= 8:
-            return "✅ Solid Platform", "green", (
-                f"**{bat['short']}** building well at **{crr}** RPO. "
-                f"Projected total: **~{proj}**. "
-                f"Fielding team holding control — **{fwp}%** win chance.")
+            return "✅ Solid Platform", "green", (f"**{bat['short']}** building well at **{crr}** RPO. Projected total: **~{proj}**.")
         else:
-            return "⚠️ Below Par", "amber", (
-                f"**{bat['short']}** scoring at **{crr}** RPO — below T20 par. "
-                f"Projected total: **~{proj}**. "
-                f"Fielding side in command — **{fwp}%** win probability.")
+            return "⚠️ Below Par", "amber", (f"**{bat['short']}** scoring at **{crr}** RPO — below T20 par. Projected total: **~{proj}**.")
     else:
         rn  = sc["required"]; bl = sc["balls_left"]; rr = sc["req_rr"]
         wl  = 10 - bat["_w"]
         bpw = round(bl/max(1,wl), 1) if wl > 0 else 0
         if bwp >= 65:
-            return "🟢 Chase On Track", "green", (
-                f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. "
-                f"**{wl} wickets** in hand (~{bpw} balls/wkt). "
-                f"**{bat['short']}** win probability: **{bwp}%** — chase well within reach.")
+            return "🟢 Chase On Track", "green", (f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. **{wl} wickets** in hand (~{bpw} balls/wkt).")
         elif bwp >= 45:
-            return "🟡 Finely Balanced", "amber", (
-                f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. "
-                f"**{wl} wickets** remaining. Either team can take control. "
-                f"**{bat['short']}** at **{bwp}%** · **{sc['field']['short']}** at **{fwp}%**.")
+            return "🟡 Finely Balanced", "amber", (f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. **{wl} wickets** remaining.")
         else:
-            return "🔴 Under Pressure", "red", (
-                f"Need **{rn}** off **{bl}** balls · steep req rate of **{rr}**. "
-                f"Only **{wl} wickets** left. "
-                f"**{sc['field']['short']}** heavily favoured at **{fwp}%**.")
+            return "🔴 Under Pressure", "red", (f"Need **{rn}** off **{bl}** balls · steep req rate of **{rr}**. Only **{wl} wickets** left.")
 
 # ── RENDER FUNCTIONS ──────────────────────────────────────────────────────────
 def render_navbar(sc, is_live):
@@ -365,12 +388,12 @@ def render_navbar(sc, is_live):
     lb  = '<span style="background:#DC2626;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-right:8px">LIVE</span>' if is_live else ""
     st.markdown(
         f'<div class="navbar">'
-        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v4.1 '
+        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v4.2 '
         f'<span style="font-size:11px;color:#94A3B8;font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div class="navbar-sub">{lb}{sc.get("match","")}</div></div>'
         f'<div class="navbar-right">{now}<br>'
-        f'<span style="color:#4ADE80">Shadow Engine Connected: {now}</span><br>'
-        f'<span style="color:#64748B">OPERATOR: UDAY MADDILA</span></div>'
+        f'<span style="color:#4ADE80">Tactical Engine Active: {now}</span><br>'
+        f'<span style="color:#94A3B8">OPERATOR: UDAY MADDILA</span></div>'
         f'</div>', unsafe_allow_html=True)
 
 def render_scoreboard(sc):
@@ -395,19 +418,20 @@ def render_scoreboard(sc):
 
     with c1:
         s = bat["score"]; w = bat["wickets"]; o = bat["overs"]; rr = bat["rr"]
+        drs = sc.get("drs",{}).get("bat",0)
         score_txt = f"{s}/{w}" if s not in ("—","0","") else "Yet to Bat"
         sub_txt   = f"{o} Ov &nbsp;·&nbsp; CRR: <b>{rr}</b>" if s not in ("—","0","") else "Bats 2nd"
         st.markdown(
             f'<div class="score-card" style="border-left:4px solid {bc}">'
-            f'<div class="team-badge" style="color:{bc}">▶ {bat["short"]}</div>'
+            f'<div class="team-badge" style="color:{bc}">▶ {bat["short"]} <span style="color:#94A3B8; font-weight:400;">(DRS: {drs})</span></div>'
             f'<div class="score-big" style="color:{bc}">{score_txt}</div>'
             f'<div class="score-detail">{sub_txt}</div>'
             f'</div>', unsafe_allow_html=True)
 
     with c2:
         if two:
-            rn=sc["required"]; bl=sc["balls_left"]; rr=sc["req_rr"]
-            rc="#DC2626" if rr>12 else ("#D97706" if rr>9 else "#16A34A")
+            rn=sc["required"]; bl=sc["balls_left"]; req_rr=sc["req_rr"]
+            rc="#DC2626" if req_rr>12 else ("#D97706" if req_rr>9 else "#16A34A")
             html = (
                 f'<div class="score-card" style="text-align:center">'
                 f'<div style="font-size:10px;font-weight:700;letter-spacing:1px;color:#94A3B8;margin-bottom:10px">WIN PROBABILITY</div>'
@@ -419,11 +443,11 @@ def render_scoreboard(sc):
                 f'<div class="pbar"><div class="pbar-fill" style="width:{fwp}%;background:{fc}"></div></div>'
                 f'<div style="margin-top:12px;background:#FEF2F2;border-radius:6px;padding:8px;font-size:12px">'
                 f'Need <b style="color:{rc}">{rn}</b> off <b>{bl}</b> balls<br>'
-                f'Req RR: <b style="color:{rc}">{rr}</b>'
+                f'Req RR: <b style="color:{rc}">{req_rr}</b>'
                 f'</div></div>'
             )
         else:
-            o=bat["_o"]; pct=min(100,int(o/20*100))
+            o=bat["_o"]
             bu=int(o)*6+round((o%1)*10); bl=max(1,120-bu)
             proj=bat["_r"]+round(_float(bat["rr"])*bl/6*0.9)
             html = (
@@ -443,9 +467,10 @@ def render_scoreboard(sc):
 
     with c3:
         s=field["score"]; w=field["wickets"]; o=field["overs"]; rr=field["rr"]
+        drs = sc.get("drs",{}).get("fld",0)
         score_txt = f"{s}/{w}" if s not in ("—","") else "Yet to Bat"
         sub_txt   = f"{o} Ov &nbsp;·&nbsp; CRR: <b>{rr}</b>" if s not in ("—","") else "Bats next"
-        lbl = f"{field['short']}"
+        lbl = f"{field['short']} <span style='color:#94A3B8; font-weight:400;'>(DRS: {drs})</span>"
         st.markdown(
             f'<div class="score-card" style="border-left:4px solid {fc}">'
             f'<div class="team-badge" style="color:{fc}">⚡ {lbl}</div>'
@@ -454,218 +479,91 @@ def render_scoreboard(sc):
             f'</div>', unsafe_allow_html=True)
 
 def render_stats_bar(sc, batters, bowlers, extras, partner):
-    st.markdown('<div class="sh">📊 Key Match Stats</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sh">📊 Tactical Match Stats</div>', unsafe_allow_html=True)
     bat=sc["bat"]; two=sc["second_innings"]; wl=10-bat["_w"]
     crr_c="#16A34A" if _float(bat["rr"])>=8 else ("#D97706" if _float(bat["rr"])>=6 else "#DC2626")
 
     top_bat = max(batters, key=lambda x:x["runs"]) if batters else None
     top_bwl = max(bowlers, key=lambda x:x["wkts"]) if bowlers else None
-    ext_tot = extras.get("total",0) if extras else 0
 
     c1,c2,c3,c4,c5 = st.columns(5)
 
-    def tile(col, lbl, val, sub, vc="#1E293B", top="#2563EB"):
+    def tile(col, lbl, val, sub, vc="#1E293B", top="#2563EB", split_html=""):
         with col:
             st.markdown(
                 f'<div class="stat-tile" style="border-top:3px solid {top}">'
                 f'<div class="st-lbl">{lbl}</div>'
                 f'<div class="st-val" style="color:{vc}">{val}</div>'
+                f'{split_html}'
                 f'<div class="st-sub">{sub}</div></div>', unsafe_allow_html=True)
 
-    tile(c1,"Current RR", bat["rr"],
-         f'{bat["short"]} · {bat["overs"]} ov', crr_c, crr_c)
+    tile(c1,"Current RR", bat["rr"], f'{bat["short"]} · {bat["overs"]} ov', crr_c, crr_c)
 
     if two:
-        rr=sc["req_rr"]; rc="#DC2626" if rr>12 else ("#D97706" if rr>9 else "#16A34A")
-        tile(c2,"Required RR",str(rr),
-             f'{sc["required"]} runs · {sc["balls_left"]} balls', rc, rc)
+        req_rr=sc["req_rr"]; rc="#DC2626" if req_rr>12 else ("#D97706" if req_rr>9 else "#16A34A")
+        tile(c2,"Required RR",str(req_rr), f'{sc["required"]} runs · {sc["balls_left"]} balls', rc, rc)
     else:
-        tile(c2,"Wickets Left",str(wl),
-             f'{bat["wickets"]} fallen so far',"#7C3AED","#7C3AED")
+        tile(c2,"Wickets Left",str(wl), f'{bat["wickets"]} fallen so far',"#7C3AED","#7C3AED")
 
-    if partner and isinstance(partner, dict):
-        pr = partner.get("runs", partner.get("totalRuns","—"))
-        pb = partner.get("balls", partner.get("totalBalls","—"))
-        tile(c3,"Partnership",f'{pr}({pb}b)',"Current pair","#0EA5E9","#0EA5E9")
+    # Injected V4.2 Partnership Split
+    if partner and partner.get("runs", 0) > 0:
+        pr = partner.get("runs", 0); pb = partner.get("balls", 0)
+        p1r = partner.get("p1_runs", 0); p2r = partner.get("p2_runs", 0)
+        p1n = partner.get("p1_name", ""); p2n = partner.get("p2_name", "")
+        p1_pct = int((p1r/pr)*100) if pr > 0 else 50
+        p2_pct = 100 - p1_pct
+        split = f'<div class="split-bar"><div style="width:{p1_pct}%; background:#1D4ED8;"></div><div style="width:{p2_pct}%; background:#94A3B8;"></div></div><div style="font-size:9px; color:#64748B; display:flex; justify-content:space-between;"><span>{p1n} {p1_pct}%</span><span>{p2n} {p2_pct}%</span></div>'
+        tile(c3,"Partnership",f'{pr}({pb}b)',"Current Pair Split","#0EA5E9","#0EA5E9", split_html=split)
     else:
-        tile(c3,"Extras",str(ext_tot),
-             f'Wd:{extras.get("wides",0)} NB:{extras.get("noballs",0)}' if extras else "","#64748B","#64748B")
+        ext_tot = extras.get("total",0) if extras else 0
+        tile(c3,"Extras",str(ext_tot), f'Wd:{extras.get("wides",0)} NB:{extras.get("noballs",0)}' if extras else "","#64748B","#64748B")
 
     if top_bat:
-        tile(c4,"Top Scorer",f'{top_bat["runs"]}*({top_bat["balls"]}b)',
-             f'{top_bat["name"]} · SR:{top_bat["sr"]}', "#1D4ED8","#1D4ED8")
+        tile(c4,"Top Scorer",f'{top_bat["runs"]}*({top_bat["balls"]}b)', f'{top_bat["name"]} · SR:{top_bat["sr"]}', "#1D4ED8","#1D4ED8")
     else:
         tile(c4,"Top Scorer","—","Awaiting scorecard","#94A3B8","#94A3B8")
 
     if top_bwl:
         ec=top_bwl["econ"]; ec_c="#16A34A" if ec<8 else ("#D97706" if ec<11 else "#DC2626")
-        tile(c5,"Best Bowler",f'{top_bwl["wkts"]}/{top_bwl["runs"]}',
-             f'{top_bwl["name"]} · {top_bwl["overs"]}ov · Econ {ec}', ec_c, ec_c)
+        tile(c5,"Best Bowler",f'{top_bwl["wkts"]}/{top_bwl["runs"]}', f'{top_bwl["name"]} · {top_bwl["overs"]}ov · Econ {ec}', ec_c, ec_c)
     else:
         tile(c5,"Best Bowler","—","Awaiting scorecard","#94A3B8","#94A3B8")
 
-def render_batters(batters):
-    st.markdown('<div class="sh">🏏 Batting Highlights</div>', unsafe_allow_html=True)
-    if not batters:
-        st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading — data will appear shortly.</div>', unsafe_allow_html=True)
-        return
-
-    grid = "2.4fr 50px 50px 45px 45px 75px 55px"
-    hdr = (f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
-           f'<div>Batter</div><div style="text-align:right">R</div>'
-           f'<div style="text-align:right">B</div><div style="text-align:right">4s</div>'
-           f'<div style="text-align:right">6s</div><div style="text-align:right">SR</div>'
-           f'<div style="text-align:right">Status</div></div>')
-    rows = ""
-    for b in batters:
-        bn   = b.get("batting_now", False)
-        tc   = _c(b["team"])
-        sr   = b["sr"]
-        sr_c = "green" if sr>=150 else ("amber" if sr>=100 else "red")
-        name_html = (f'<span class="player-name" style="color:{tc}">{b["name"]}</span>'
-                     + ('<span class="batting-now">▶ BATTING</span>' if bn else ""))
-        out_html  = ('<span class="green">not out</span>' if bn else
-                     f'<span style="font-size:10px;color:#64748B">{b["status"][:22]}</span>')
-        rows += (f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
-                 f'<div>{name_html}</div>'
-                 f'<div class="num"><b>{b["runs"]}</b></div>'
-                 f'<div class="num">{b["balls"]}</div>'
-                 f'<div class="num">{b["4s"]}</div>'
-                 f'<div class="num">{b["6s"]}</div>'
-                 f'<div class="num"><span class="{sr_c}">{sr}</span></div>'
-                 f'<div class="num" style="text-align:right">{out_html}</div>'
-                 f'</div>')
-    st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
-
-def render_bowlers(bowlers):
-    st.markdown('<div class="sh">🎯 Bowling Highlights</div>', unsafe_allow_html=True)
-    if not bowlers:
-        st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading — data will appear shortly.</div>', unsafe_allow_html=True)
-        return
-
-    grid = "2.2fr 55px 55px 55px 55px 70px"
-    hdr = (f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
-           f'<div>Bowler</div><div style="text-align:right">O</div>'
-           f'<div style="text-align:right">M</div><div style="text-align:right">R</div>'
-           f'<div style="text-align:right">W</div><div style="text-align:right">Econ</div></div>')
-    rows = ""
-    for b in sorted(bowlers, key=lambda x:-x["overs"]):
-        tc   = _c(b["team"])
-        ec   = b["econ"]
-        ec_c = "green" if ec<8 else ("amber" if ec<11 else "red")
-        wkt_style = 'style="color:#DC2626;font-weight:700"' if b["wkts"]>0 else ""
-        bn_html = '<span style="color:#16A34A;font-size:10px;font-weight:700;margin-left:4px">▶ BOWLING</span>' if b.get("bowling_now") else ""
-        rows += (f'<div class="tbl-row" style="display:grid;grid-template-columns:{grid}">'
-                 f'<div><span class="player-name" style="color:{tc}">{b["name"]}</span>{bn_html}</div>'
-                 f'<div class="num">{b["overs"]}</div>'
-                 f'<div class="num">{b["maidens"]}</div>'
-                 f'<div class="num">{b["runs"]}</div>'
-                 f'<div class="num"><span {wkt_style}>{b["wkts"]}</span></div>'
-                 f'<div class="num"><span class="{ec_c}">{ec}</span></div>'
-                 f'</div>')
-    st.markdown(f'<div class="card">{hdr}{rows}</div>', unsafe_allow_html=True)
-
-def render_prediction_and_nextball(sc, batters, bowlers):
-    st.markdown('<div class="sh">🔮 Match Analysis & Prediction</div>', unsafe_allow_html=True)
+def render_tactical_layer(sc):
     c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown('<div class="sh" style="margin-top:0">⚡ Recent Deliveries Timeline</div>', unsafe_allow_html=True)
+        balls = sc.get("recent_balls", [])
+        html = '<div class="card" style="padding:12px 20px;"><div class="timeline-box">'
+        for b in balls:
+            cls = "ball-w" if b == "W" else ("ball-4" if b == "4" else ("ball-6" if b == "6" else ""))
+            html += f'<div class="ball-badge {cls}">{b}</div>'
+        html += '<div style="margin-left:auto; font-size:11px; color:#94A3B8; font-weight:600;">▶ THIS OVER</div></div></div>'
+        st.markdown(html, unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="sh" style="margin-top:0">🔄 Impact Player Status</div>', unsafe_allow_html=True)
+        ib = sc.get("impact", {}).get("bat", "Available")
+        ifld = sc.get("impact", {}).get("fld", "Available")
+        st.markdown(f'<div class="card" style="padding:12px 20px;"><div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600;"><span style="color:#1E293B">{sc["bat"]["short"]}: <span style="color:#16A34A">{ib}</span></span><span style="color:#1E293B">{sc["field"]["short"]}: <span style="color:#D97706">{ifld}</span></span></div></div>', unsafe_allow_html=True)
+
+def render_momentum_and_predict(sc, batters, bowlers):
+    st.markdown('<div class="sh" style="margin-top:22px">🔮 Momentum & Prediction Models</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns([2, 3])
 
     with c1:
         verdict, clr, txt = build_prediction(sc, batters, bowlers)
         cls_map = {"green":"pred-green","amber":"pred-amber","red":"pred-red"}
         st.markdown(
-            f'<div class="{cls_map[clr]}">'
+            f'<div class="{cls_map[clr]}" style="height:100%;">'
             f'<div class="pred-title">{verdict}</div>'
             f'<div class="pred-body">{txt}</div>'
             f'</div>', unsafe_allow_html=True)
 
-        st.markdown('<div style="margin-top:14px"><div class="sh" style="margin-top:0">⚡ Next Ball Prediction</div></div>', unsafe_allow_html=True)
-        probs = next_ball(sc)
-        cells_html = '<div class="nb-grid">'
-        cfg = {
-            "dot": ("nb-dot",  "·",  "DOT"),
-            "1":   ("nb-one",  "1",  "SINGLE"),
-            "2":   ("nb-two",  "2",  "TWO"),
-            "4":   ("nb-four", "4",  "FOUR"),
-            "6":   ("nb-six",  "6",  "SIX"),
-            "W":   ("nb-wkt",  "🎯", "WICKET"),
-        }
-        for k, (cls, icon, lbl) in cfg.items():
-            pct = probs.get(k, 0)
-            cells_html += (
-                f'<div class="nb-cell {cls}">'
-                f'<div class="nb-val">{icon}</div>'
-                f'<div class="nb-lbl">{lbl}</div>'
-                f'<div class="nb-pct">{pct}%</div>'
-                f'</div>')
-        cells_html += '</div>'
-        likely = max(probs, key=probs.get)
-        likely_desc = {"dot":"Dot ball likely — good bowling spell",
-                       "1":"Single expected — steady rotation",
-                       "2":"Two runs — good running between wickets",
-                       "4":"Boundary incoming — attacking shot",
-                       "6":"Maximum likely — big hit expected",
-                       "W":"Wicket alert — bowling pressure building"}
-        st.markdown(
-            f'<div class="card">{cells_html}'
-            f'<div style="margin-top:10px;font-size:12px;color:#64748B">'
-            f'▶ Most likely: <b style="color:#1E293B">{likely_desc[likely]}</b>'
-            f'</div></div>', unsafe_allow_html=True)
-
     with c2:
-        bat=sc["bat"]; fld=sc["field"]
-        bc=_c(bat["short"]); fc=_c(fld["short"])
-        bwp=sc["bat_wp"]; fwp=sc["fld_wp"]
-
-        st.markdown(
-            f'<div class="card">'
-            f'<div style="font-size:10px;font-weight:700;letter-spacing:1px;color:#94A3B8;margin-bottom:12px">WIN PROBABILITY MODEL</div>'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">'
-            f'<span style="font-weight:700;color:{bc};font-size:15px">{bat["short"]}</span>'
-            f'<span style="font-size:26px;font-weight:700;color:{bc}">{bwp}%</span></div>'
-            f'<div class="pbar" style="height:14px"><div class="pbar-fill" style="width:{bwp}%;background:{bc}"></div></div>'
-            f'<div style="font-size:11px;color:#64748B;margin-bottom:16px;margin-top:3px">'
-            f'{"Batting" if sc["second_innings"] else "Bowling"} · {bat["overs"]} ov · {bat["wickets"]} wkts</div>'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">'
-            f'<span style="font-weight:700;color:{fc};font-size:15px">{fld["short"]}</span>'
-            f'<span style="font-size:26px;font-weight:700;color:{fc}">{fwp}%</span></div>'
-            f'<div class="pbar" style="height:14px"><div class="pbar-fill" style="width:{fwp}%;background:{fc}"></div></div>'
-            f'<div style="font-size:11px;color:#64748B;margin-top:3px">'
-            f'{"Bowling" if sc["second_innings"] else "Batting"}</div>'
-            f'</div>', unsafe_allow_html=True)
-
-        two=sc["second_innings"]; ph=sc["phase"]
-        ph_c="#1D4ED8" if ph=="powerplay" else ("#991B1B" if ph=="death" else ("#16A34A" if ph=="completed" else "#92400E"))
-        context_lines = []
-        if ph != "completed":
-            if two:
-                context_lines.append(f'<b>Req RR:</b> {sc["req_rr"]} &nbsp;·&nbsp; <b>Balls:</b> {sc["balls_left"]}')
-                context_lines.append(f'<b>Wickets left:</b> {10 - bat["_w"]}')
-            else:
-                context_lines.append(f'<b>CRR:</b> {bat["rr"]} &nbsp;·&nbsp; Over {bat["_o"]}')
-        else:
-            context_lines.append(f'<b>Result:</b> {sc["status"]}')
-            
-        st.markdown(
-            f'<div class="card" style="margin-top:10px">'
-            f'<div style="font-size:10px;font-weight:700;letter-spacing:1px;color:#94A3B8;margin-bottom:10px">MATCH SITUATION</div>'
-            f'<div style="font-size:13px;color:#374151;line-height:2">'
-            + "<br>".join(context_lines) +
-            f'<br><b>Phase:</b> <span style="color:{ph_c};font-weight:700">{ph.capitalize()}</span>'
-            f'</div></div>', unsafe_allow_html=True)
-
-def render_news(news):
-    st.markdown('<div class="sh">📰 IPL 2026 News</div>', unsafe_allow_html=True)
-    if not news:
-        st.info("News feed unavailable.")
-        return
-    html = '<div class="card">'
-    for n in news:
-        html += (f'<div class="news-item">'
-                 f'<a href="{n["link"]}" target="_blank">{n["title"]}</a>'
-                 f'<div class="news-src">{n["source"]} · {n["published"]}</div>'
-                 f'</div>')
-    html += '</div>'
-    st.markdown(html, unsafe_allow_html=True)
+        st.markdown('<div class="card" style="padding:10px 20px 0;">', unsafe_allow_html=True)
+        ov, wp, rr, req = demo_momentum()
+        st.plotly_chart(chart_momentum(ov, wp, rr, req), width="stretch", config={"displayModeBar":False})
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_upcoming_match(news):
     st.markdown('<div class="sh" style="margin-top:20px">&#9672; TONIGHT\'S BLOCKBUSTER</div>', unsafe_allow_html=True)
@@ -685,7 +583,7 @@ def render_upcoming_match(news):
         f'</div>', unsafe_allow_html=True
     )
     
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns([2, 2, 2])
     with c1:
         st.markdown('<div class="sh">🌟 PLAYERS TO WATCH</div>', unsafe_allow_html=True)
         st.markdown(
@@ -696,11 +594,20 @@ def render_upcoming_match(news):
             f'<div style="font-size:13px; color:#484F58;">{kkr_key}</div>'
             f'</div>', unsafe_allow_html=True
         )
-        
     with c2:
-        st.markdown('<div class="sh">🏥 SQUAD SCANNER & INTEL</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh">🏥 SQUAD SCANNER</div>', unsafe_allow_html=True)
         alerts_html = "".join([f'<div style="font-size:13px; color:#DC2626; font-weight:600; margin-bottom:8px;">{a}</div>' if '⚠️' in a else f'<div style="font-size:13px; color:#16A34A; font-weight:600; margin-bottom:8px;">{a}</div>' for a in injury_alerts])
         st.markdown(f'<div class="card" style="height: 100%;">{alerts_html}</div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown('<div class="sh">📈 TOURNAMENT CONTEXT</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="card" style="height: 100%; font-size:13px;">'
+            f'<div style="font-weight:700; color:#1E293B; margin-bottom:8px;">Pitch Report (Wankhede):</div>'
+            f'<div style="color:#475569; margin-bottom:12px;">Red soil pitch. High dew expected after 9 PM. Par score: 195. Teams winning toss overwhelmingly choose to chase here.</div>'
+            f'<div style="font-weight:700; color:#1E293B; margin-bottom:4px;">Live Standings Impact:</div>'
+            f'<div style="color:#475569;">MI Win: Moves to 2nd (+0.4 NRR)<br>KKR Win: Jumps to 3rd (+0.8 NRR)</div>'
+            f'</div>', unsafe_allow_html=True
+        )
     
     st.markdown('<div class="sh">📰 LATEST MI VS KKR INTEL</div>', unsafe_allow_html=True)
     if news:
@@ -712,11 +619,12 @@ def render_upcoming_match(news):
     else:
         st.info("No latest news available.")
 
+
 # ── CONTROLS ──────────────────────────────────────────────────────────────────
 ca, cb, cc, cd, ce = st.columns([3,1,1,1,1])
 with ca:
     st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">'
-                "GOD'S EYE v4.1 · © Uday Maddila</div>", unsafe_allow_html=True)
+                "GOD'S EYE v4.2 · © Uday Maddila</div>", unsafe_allow_html=True)
 with cb: auto_ref  = st.toggle("Auto-Refresh", value=True)
 with cc: pass 
 with cd: pass 
@@ -733,31 +641,25 @@ is_live = sc["phase"] != "completed"
 
 render_navbar(sc, is_live)
 
-# --- TABBED VIEW IMPLEMENTATION ---
+# --- TABBED VIEW ---
 tab1, tab2 = st.tabs(["🔴 Live/Recent Match (RCB vs SRH)", "⏭️ Next Match Preview (MI vs KKR)"])
 
 with tab1:
     render_scoreboard(sc)
     render_stats_bar(sc, batters, bowlers, extras, partner)
-    render_prediction_and_nextball(sc, batters, bowlers)
-
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    cl, cr = st.columns(2, gap="medium")
-    with cl: render_batters(batters)
-    with cr: render_bowlers(bowlers)
-
-    render_news(news)
-
-with tab2:
-    render_upcoming_match(upcoming_news)
+    render_tactical_layer(sc)
+    render_momentum_and_predict(sc, batters, bowlers)
 
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
-    f'GOD\'S EYE v4.1 · Data Engine: Direct Web Scraper · '
+    f'GOD\'S EYE v4.2 · Data Engine: Direct Web Scraper · '
     f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
     f'© Uday Maddila</div>',
     unsafe_allow_html=True)
+
+with tab2:
+    render_upcoming_match(upcoming_news)
 
 if auto_ref:
     time.sleep(REFRESH_SECS)
