@@ -1,8 +1,8 @@
 """
-GOD'S EYE v5.1 — IPL LIVE MATCH CENTER
+GOD'S EYE v5.2 — IPL LIVE MATCH CENTER
 Operator : Uday Maddila
-Update: Fixed Claude's hallucinated model name, patched dictionary collision, 
-        corrected Match 1 labels, and updated Demo badge to Archive.
+Update: Graceful degradation for API limits. Local Tactical Engine activated. 
+        Zero errors for non-billed API keys.
 """
 
 import streamlit as st
@@ -214,7 +214,6 @@ def _float(v, d=0.0):
     except: return d
 
 def _layout(**kw):
-    # FIXED: Replaced Claude's broken dict merge with safe dictionary update
     d = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
              font=dict(family="Inter, sans-serif", color="#475569", size=11),
              margin=dict(l=10, r=10, t=34, b=10),
@@ -293,7 +292,6 @@ def next_ball(sc):
 
 # ── MONTE CARLO ENGINE ────────────────────────────────────────────────────────
 def run_monte_carlo(balls_left, runs_needed, wkts_left, phase, n=3000):
-    """Simulate n innings completions. Returns (bat_win_pct, field_win_pct, score_dist)."""
     PHASE_PROBS = {
         "powerplay": [("dot",.27),("1",.22),("2",.09),("4",.18),("6",.13),("W",.07),("wd",.04)],
         "middle":    [("dot",.34),("1",.25),("2",.09),("4",.14),("6",.08),("W",.07),("wd",.03)],
@@ -499,7 +497,7 @@ def resolve_scraper():
     elif cb_data:
         st.session_state.scraper_src = "Cricbuzz"
     else:
-        st.session_state.scraper_src = "Archive" # FIXED: Replaced "Demo" badge
+        st.session_state.scraper_src = "Archive"
 
     return _get_last_match()
 
@@ -580,7 +578,6 @@ def generate_match_preview(news):
 
 # ── ARCHIVED MATCH DATA ───────────────────────────────────────────────────────
 def _get_last_match():
-    # FIXED: Changed "Match 9" back to "1st Match"
     srh = {"name":"Sunrisers Hyderabad","short":"SRH","score":"201","wickets":"9",
            "overs":"20.0","rr":"10.05","_r":201,"_w":9,"_o":20.0}
     rcb = {"name":"Royal Challengers Bengaluru","short":"RCB","score":"203","wickets":"4",
@@ -650,7 +647,7 @@ def _call_claude(prompt, system_msg="", max_tokens=350):
         return None
     try:
         payload = {
-            "model": "claude-3-haiku-20240307", # FIXED: Using the real model name
+            "model": "claude-3-haiku-20240307", 
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -802,7 +799,7 @@ def chart_ppi_gauge(batters, sc):
     names, ppis, colors = [], [], []
     for b in batters[:6]:
         ppi = compute_ppi(b, sc)
-        lbl, clr = ppi_label(ppi) # FIXED: Properly unpacks only two values
+        lbl, clr = ppi_label(ppi)
         names.append(b["name"].split()[-1])
         ppis.append(ppi)
         colors.append(clr)
@@ -895,7 +892,7 @@ def render_navbar(sc, is_live):
           if is_live else "")
     st.markdown(
         f'<div class="navbar">'
-        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v5.1 '
+        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v5.2 '
         f'<span style="font-size:11px;color:#94A3B8;font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div class="navbar-sub">{lb}{sc.get("match","")}&nbsp;'
         f'<span class="src-badge {src_cls}">{src}</span></div></div>'
@@ -1150,6 +1147,84 @@ def render_full_scorecard(batters, bowlers, sc):
 
 
 # ── RENDER: TAB 2 — AI ORACLE ─────────────────────────────────────────────────
+def render_claude_commentary(sc, batters):
+    st.markdown('<div class="sh" style="margin-top:20px">🎤 LIVE AI COMMENTARY</div>', unsafe_allow_html=True)
+    striker = next((b for b in batters if b.get("batting_now")), None)
+    ctx = (f"Match: {sc.get('match','')}. Phase: {sc['phase']}. "
+           f"Score: {sc['bat']['score']}/{sc['bat']['wickets']} in {sc['bat']['overs']} overs. "
+           f"{'Second innings — need '+str(sc['required'])+' off '+str(sc['balls_left'])+' balls, req RR '+str(sc['req_rr'])+'. ' if sc['second_innings'] else ''}"
+           f"{'Striker: '+striker['name']+' '+str(striker['runs'])+'('+str(striker['balls'])+') SR:'+str(striker['sr'])+'. ' if striker else ''}"
+           f"Win probability: {sc['bat']['short']} {sc['bat_wp']}%.")
+    
+    api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "")
+    
+    if api_key_check:
+        commentary = get_ai_commentary(ctx)
+        if commentary:
+            powered = " (Claude AI Connected)"
+        else:
+            commentary = _fallback_commentary(sc, batters)
+            powered = " (Local Engine Active)"
+    else:
+        commentary = _fallback_commentary(sc, batters)
+        powered = " (Local Tactical Engine)"
+        
+    st.markdown(
+        f'<div class="commentary-box">'
+        f'<div style="font-size:10px;color:#38BDF8;font-weight:700;letter-spacing:2px;margin-bottom:12px">'
+        f'▶ LIVE COMMENTARY{powered}</div>'
+        f'<div style="font-size:15px;line-height:1.75;color:#F1F5F9">{commentary}</div>'
+        f'</div>',
+        unsafe_allow_html=True)
+
+def render_captains_corner(sc, batters, bowlers):
+    st.markdown('<div class="sh" style="margin-top:20px">🧠 CAPTAIN\'S CORNER — TACTICAL BRAIN</div>', unsafe_allow_html=True)
+    striker = next((b for b in batters if b.get("batting_now")), None)
+    curr_b  = next((b for b in bowlers if b.get("bowling_now")), None)
+    ctx = (f"T20 cricket. Phase: {sc['phase']}. "
+           f"{'Chase: need '+str(sc['required'])+' off '+str(sc['balls_left'])+' balls, req RR '+str(sc['req_rr'])+', '+str(10-sc['bat']['_w'])+' wickets left. ' if sc['second_innings'] else 'First innings. '}"
+           f"{'Striker SR: '+str(striker['sr'])+'. ' if striker else ''}"
+           f"{'Current bowler economy: '+str(curr_b['econ'])+'. ' if curr_b else ''}"
+           f"What should the captain do RIGHT NOW?")
+           
+    api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "")
+    
+    if api_key_check:
+        advice = get_captains_corner(ctx)
+        if advice:
+            powered = " (Claude AI Connected)"
+        else:
+            advice = _fallback_captain(sc, batters, bowlers)
+            powered = " (Local Engine Active)"
+    else:
+        advice = _fallback_captain(sc, batters, bowlers)
+        powered = " (Local Tactical Engine)"
+
+    st.markdown(
+        f'<div class="captain-box">'
+        f'<div style="font-size:10px;color:#4ADE80;font-weight:700;letter-spacing:2px;margin-bottom:12px">'
+        f'▶ CAPTAIN\'S TACTICAL BRIEF{powered}</div>'
+        f'<div style="font-size:14px;line-height:1.85;color:#F1F5F9;white-space:pre-line">{advice}</div>'
+        f'</div>',
+        unsafe_allow_html=True)
+
+    # Next ball grid
+    st.markdown('<div class="sh" style="margin-top:20px">🎲 NEXT BALL PROBABILITY ENGINE</div>', unsafe_allow_html=True)
+    probs = next_ball(sc)
+    styles = {"dot":"nb-dot","1":"nb-one","2":"nb-two","4":"nb-four","6":"nb-six","W":"nb-wkt"}
+    icons  = {"dot":"•","1":"1","2":"2","4":"4","6":"6","W":"💀"}
+    cells  = "".join([
+        f'<div class="nb-cell {styles[k]}">'
+        f'<div class="nb-val">{icons[k]}</div>'
+        f'<div class="nb-lbl">{k.upper()}</div>'
+        f'<div class="nb-pct">{v}%</div></div>' for k,v in probs.items()])
+    most   = max(probs, key=probs.get)
+    lbl_map= {"dot":"Dot ball most likely","1":"Single dominant","2":"Two runs likely",
+               "4":"Boundary incoming!","6":"Six possible!","W":"Wicket alert!"}
+    st.markdown(f'<div class="card"><div class="nb-grid">{cells}</div>'
+                f'<div style="margin-top:12px;font-size:12px;color:#475569;font-weight:600">'
+                f'▶ {lbl_map[most]}</div></div>', unsafe_allow_html=True)
+
 def render_ai_oracle(sc, batters, bowlers):
     striker      = next((b for b in batters if b.get("batting_now")), batters[0] if batters else None)
     curr_bowler  = next((b for b in bowlers if b.get("bowling_now")), bowlers[0] if bowlers else None)
@@ -1246,85 +1321,6 @@ def render_ai_oracle(sc, batters, bowlers):
         f'<div style="font-size:16px;font-weight:500;color:{gold_c};line-height:1.5">{verdict}</div>'
         f'</div></div>',
         unsafe_allow_html=True)
-
-def render_claude_commentary(sc, batters):
-    st.markdown('<div class="sh" style="margin-top:20px">🎤 LIVE AI COMMENTARY</div>', unsafe_allow_html=True)
-    striker = next((b for b in batters if b.get("batting_now")), None)
-    ctx = (f"Match: {sc.get('match','')}. Phase: {sc['phase']}. "
-           f"Score: {sc['bat']['score']}/{sc['bat']['wickets']} in {sc['bat']['overs']} overs. "
-           f"{'Second innings — need '+str(sc['required'])+' off '+str(sc['balls_left'])+' balls, req RR '+str(sc['req_rr'])+'. ' if sc['second_innings'] else ''}"
-           f"{'Striker: '+striker['name']+' '+str(striker['runs'])+'('+str(striker['balls'])+') SR:'+str(striker['sr'])+'. ' if striker else ''}"
-           f"Win probability: {sc['bat']['short']} {sc['bat_wp']}%.")
-    
-    # Check if Claude returns an actual error instead of just silently failing
-    api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "")
-    
-    if api_key_check:
-        commentary = get_ai_commentary(ctx)
-        if commentary:
-            powered = ""
-        else:
-            commentary = _fallback_commentary(sc, batters)
-            powered = " (⚠️ Anthropic API Error: Check credits or key validity)"
-    else:
-        commentary = _fallback_commentary(sc, batters)
-        powered = " (Rule-based · Add ANTHROPIC_API_KEY for Claude)"
-        
-    st.markdown(
-        f'<div class="commentary-box">'
-        f'<div style="font-size:10px;color:#38BDF8;font-weight:700;letter-spacing:2px;margin-bottom:12px">'
-        f'▶ LIVE COMMENTARY{powered}</div>'
-        f'<div style="font-size:15px;line-height:1.75;color:#F1F5F9">{commentary}</div>'
-        f'</div>',
-        unsafe_allow_html=True)
-
-def render_captains_corner(sc, batters, bowlers):
-    st.markdown('<div class="sh" style="margin-top:20px">🧠 CAPTAIN\'S CORNER — TACTICAL BRAIN</div>', unsafe_allow_html=True)
-    striker = next((b for b in batters if b.get("batting_now")), None)
-    curr_b  = next((b for b in bowlers if b.get("bowling_now")), None)
-    ctx = (f"T20 cricket. Phase: {sc['phase']}. "
-           f"{'Chase: need '+str(sc['required'])+' off '+str(sc['balls_left'])+' balls, req RR '+str(sc['req_rr'])+', '+str(10-sc['bat']['_w'])+' wickets left. ' if sc['second_innings'] else 'First innings. '}"
-           f"{'Striker SR: '+str(striker['sr'])+'. ' if striker else ''}"
-           f"{'Current bowler economy: '+str(curr_b['econ'])+'. ' if curr_b else ''}"
-           f"What should the captain do RIGHT NOW?")
-           
-    api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "")
-    
-    if api_key_check:
-        advice = get_captains_corner(ctx)
-        if advice:
-            powered = ""
-        else:
-            advice = _fallback_captain(sc, batters, bowlers)
-            powered = " (⚠️ Anthropic API Error: Check credits or key validity)"
-    else:
-        advice = _fallback_captain(sc, batters, bowlers)
-        powered = " (Rule-based · Add ANTHROPIC_API_KEY for Claude)"
-
-    st.markdown(
-        f'<div class="captain-box">'
-        f'<div style="font-size:10px;color:#4ADE80;font-weight:700;letter-spacing:2px;margin-bottom:12px">'
-        f'▶ CAPTAIN\'S TACTICAL BRIEF{powered}</div>'
-        f'<div style="font-size:14px;line-height:1.85;color:#F1F5F9;white-space:pre-line">{advice}</div>'
-        f'</div>',
-        unsafe_allow_html=True)
-
-    # Next ball grid
-    st.markdown('<div class="sh" style="margin-top:20px">🎲 NEXT BALL PROBABILITY ENGINE</div>', unsafe_allow_html=True)
-    probs = next_ball(sc)
-    styles = {"dot":"nb-dot","1":"nb-one","2":"nb-two","4":"nb-four","6":"nb-six","W":"nb-wkt"}
-    icons  = {"dot":"•","1":"1","2":"2","4":"4","6":"6","W":"💀"}
-    cells  = "".join([
-        f'<div class="nb-cell {styles[k]}">'
-        f'<div class="nb-val">{icons[k]}</div>'
-        f'<div class="nb-lbl">{k.upper()}</div>'
-        f'<div class="nb-pct">{v}%</div></div>' for k,v in probs.items()])
-    most   = max(probs, key=probs.get)
-    lbl_map= {"dot":"Dot ball most likely","1":"Single dominant","2":"Two runs likely",
-               "4":"Boundary incoming!","6":"Six possible!","W":"Wicket alert!"}
-    st.markdown(f'<div class="card"><div class="nb-grid">{cells}</div>'
-                f'<div style="margin-top:12px;font-size:12px;color:#475569;font-weight:600">'
-                f'▶ {lbl_map[most]}</div></div>', unsafe_allow_html=True)
 
 
 # ── RENDER: TAB 3 — PREDICTION LAB ───────────────────────────────────────────
@@ -1679,7 +1675,7 @@ def render_upcoming_match(news):
 # ── CONTROLS ROW ──────────────────────────────────────────────────────────────
 ca,cb,cc,cd = st.columns([4,1,1,1])
 with ca:
-    st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">GOD\'S EYE v5.1 · Shadow Scraper · © Uday Maddila</div>',
+    st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">GOD\'S EYE v5.2 · Shadow Scraper · © Uday Maddila</div>',
                 unsafe_allow_html=True)
 with cb: auto_ref = st.toggle("Auto-Refresh", value=True)
 with cc: pass
@@ -1747,8 +1743,8 @@ IST = pytz.timezone("Asia/Kolkata")
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
-    f'GOD\'S EYE v5.1 · Shadow Scraper Engine · Smart URL Switcher · Multi-Source Consensus · '
-    f'Monte Carlo Engine · Claude AI · Last sync: {datetime.now(IST).strftime("%H:%M:%S IST")} · '
+    f'GOD\'S EYE v5.2 · Shadow Scraper Engine · Smart URL Switcher · Multi-Source Consensus · '
+    f'Monte Carlo Engine · Local Tactical Engine · Last sync: {datetime.now(IST).strftime("%H:%M:%S IST")} · '
     f'&copy; Uday Maddila</div>',
     unsafe_allow_html=True)
 
