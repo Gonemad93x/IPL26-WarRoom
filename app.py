@@ -1,7 +1,7 @@
 """
-GOD'S EYE v4.3 — IPL LIVE MATCH CENTER (GOD TIER)
+GOD'S EYE v4.4 — IPL LIVE MATCH CENTER (AI ORACLE)
 Operator : Uday Maddila
-Update: Added collapsible Full Scorecard view & refined highlight sorting.
+Update: Added Tab 3 (AI Oracle) for ball-by-ball micro-predictions based on SR & Econ.
 """
 
 import streamlit as st
@@ -128,6 +128,14 @@ div.block-container{padding:0.8rem 1.8rem 2rem!important;max-width:1440px;}
 .ball-4 { background: #ECFDF5; border-color: #6EE7B7; color: #059669; }
 .ball-6 { background: #F5F3FF; border-color: #C4B5FD; color: #7C3AED; }
 
+/* AI Oracle specific */
+.oracle-box { background: linear-gradient(135deg, #1E293B, #0F172A); color: white; border-radius: 10px; padding: 20px; position: relative; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 1px solid #334155; }
+.oracle-box h3 { color: #38BDF8; font-size: 16px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 15px; }
+.oracle-vs { font-size: 28px; font-weight: 800; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.oracle-vs-vs { font-size: 14px; color: #94A3B8; font-weight: 500; }
+.intent-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 8px; background: #334155; }
+.intent-fill { height: 100%; border-radius: 5px; }
+
 /* News */
 .news-item{padding:10px 0;border-bottom:1px solid #F1F5F9;}
 .news-item:last-child{border-bottom:none;}
@@ -183,16 +191,6 @@ def _layout(**kw):
              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"))
     d.update(kw)
     return d
-
-def _ax(title="", sfx="", rng=None, **kw):
-    d = dict(title=title, showgrid=True, gridcolor="#F1F5F9", zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0")
-    if sfx: d["ticksuffix"] = sfx
-    if rng: d["range"] = rng
-    d.update(kw)
-    return d
-
-def _ax2(title=""):
-    return dict(title=title, showgrid=False, zeroline=False, tickfont=dict(size=10), linecolor="#E2E8F0", overlaying="y", side="right")
 
 
 # ── WIN PROBABILITY MODELS ────────────────────────────────────────────────────
@@ -261,10 +259,8 @@ def resolve_scraper():
         except: return None
 
     live_status = scrape_espn()
-    
     if live_status and ("CRR" in live_status or "Live" in live_status):
         pass 
-        
     return _get_last_match()
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -351,42 +347,6 @@ def chart_momentum(ov, wp, rr, req):
     fig.update_layout(**_layout(title=dict(text="MOMENTUM WORM", font=dict(size=11,color="#1E293B",weight="bold"),x=0), height=220, margin=dict(l=0, r=0, t=30, b=0)))
     return fig
 
-
-# ── PREDICTION ────────────────────────────────────────────────────────────────
-def build_prediction(sc, batters, bowlers):
-    bat  = sc["bat"]
-    two  = sc["second_innings"]
-    bwp  = sc["bat_wp"]
-    fwp  = sc["fld_wp"]
-    
-    if sc["phase"] == "completed":
-         return "🏆 Match Concluded", "green", (
-             f"**{sc['status']}**. "
-             f"A dominant performance securing the victory.")
-
-    if not two:
-        crr  = _float(bat["rr"])
-        o    = bat["_o"]
-        bu   = int(o)*6 + round((o%1)*10)
-        bl   = max(1, 120-bu)
-        proj = bat["_r"] + round(crr * bl/6 * 0.9) 
-        if crr >= 10:
-            return "🔥 Explosive Start", "green", (f"**{bat['short']}** are on fire at **{crr}** RPO. Projected total: **~{proj}**.")
-        elif crr >= 8:
-            return "✅ Solid Platform", "green", (f"**{bat['short']}** building well at **{crr}** RPO. Projected total: **~{proj}**.")
-        else:
-            return "⚠️ Below Par", "amber", (f"**{bat['short']}** scoring at **{crr}** RPO — below T20 par. Projected total: **~{proj}**.")
-    else:
-        rn  = sc["required"]; bl = sc["balls_left"]; rr = sc["req_rr"]
-        wl  = 10 - bat["_w"]
-        bpw = round(bl/max(1,wl), 1) if wl > 0 else 0
-        if bwp >= 65:
-            return "🟢 Chase On Track", "green", (f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. **{wl} wickets** in hand (~{bpw} balls/wkt).")
-        elif bwp >= 45:
-            return "🟡 Finely Balanced", "amber", (f"Need **{rn}** off **{bl}** balls · Req RR: **{rr}**. **{wl} wickets** remaining.")
-        else:
-            return "🔴 Under Pressure", "red", (f"Need **{rn}** off **{bl}** balls · steep req rate of **{rr}**. Only **{wl} wickets** left.")
-
 # ── RENDER FUNCTIONS ──────────────────────────────────────────────────────────
 def render_navbar(sc, is_live):
     IST = pytz.timezone('Asia/Kolkata')
@@ -394,11 +354,11 @@ def render_navbar(sc, is_live):
     lb  = '<span style="background:#DC2626;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-right:8px">LIVE</span>' if is_live else ""
     st.markdown(
         f'<div class="navbar">'
-        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v4.3 '
+        f'<div><div class="navbar-logo">GOD\'S<span>EYE</span> v4.4 '
         f'<span style="font-size:11px;color:#94A3B8;font-weight:400">IPL MATCH CENTER</span></div>'
         f'<div class="navbar-sub">{lb}{sc.get("match","")}</div></div>'
         f'<div class="navbar-right">{now}<br>'
-        f'<span style="color:#4ADE80">Tactical Engine Active: {now}</span><br>'
+        f'<span style="color:#4ADE80">AI Oracle Engine Active</span><br>'
         f'<span style="color:#94A3B8">OPERATOR: UDAY MADDILA</span></div>'
         f'</div>', unsafe_allow_html=True)
 
@@ -556,13 +516,24 @@ def render_momentum_and_predict(sc, batters, bowlers):
     c1, c2 = st.columns([2, 3])
 
     with c1:
-        verdict, clr, txt = build_prediction(sc, batters, bowlers)
+        # Original Macro Predictor
+        bat = sc["bat"]; two = sc["second_innings"]; bwp = sc["bat_wp"]; fwp = sc["fld_wp"]
+        if sc["phase"] == "completed":
+             verdict, clr, txt = "🏆 Match Concluded", "green", f"**{sc['status']}**."
+        elif not two:
+            crr = _float(bat["rr"]); o = bat["_o"]; bu = int(o)*6 + round((o%1)*10); bl = max(1, 120-bu); proj = bat["_r"] + round(crr * bl/6 * 0.9) 
+            if crr >= 10: verdict, clr, txt = "🔥 Explosive Start", "green", f"Projected total: **~{proj}**."
+            elif crr >= 8: verdict, clr, txt = "✅ Solid Platform", "green", f"Projected total: **~{proj}**."
+            else: verdict, clr, txt = "⚠️ Below Par", "amber", f"Projected total: **~{proj}**."
+        else:
+            rn = sc["required"]; bl = sc["balls_left"]; rr = sc["req_rr"]; wl = 10 - bat["_w"]
+            bpw = round(bl/max(1,wl), 1) if wl > 0 else 0
+            if bwp >= 65: verdict, clr, txt = "🟢 Chase On Track", "green", f"Need **{rn}** off **{bl}**. **{wl} wickets** in hand."
+            elif bwp >= 45: verdict, clr, txt = "🟡 Finely Balanced", "amber", f"Need **{rn}** off **{bl}**. Either team can win."
+            else: verdict, clr, txt = "🔴 Under Pressure", "red", f"Need **{rn}** off **{bl}**. Steep req rate of **{rr}**."
+
         cls_map = {"green":"pred-green","amber":"pred-amber","red":"pred-red"}
-        st.markdown(
-            f'<div class="{cls_map[clr]}" style="height:100%;">'
-            f'<div class="pred-title">{verdict}</div>'
-            f'<div class="pred-body">{txt}</div>'
-            f'</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="{cls_map[clr]}" style="height:100%;"><div class="pred-title">{verdict}</div><div class="pred-body">{txt}</div></div>', unsafe_allow_html=True)
 
     with c2:
         st.markdown('<div class="card" style="padding:10px 20px 0;">', unsafe_allow_html=True)
@@ -576,7 +547,6 @@ def render_batters(batters):
         st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading — data will appear shortly.</div>', unsafe_allow_html=True)
         return
 
-    # Take the top 4 batters to display in the highlights section
     active_batters = [b for b in batters if b.get("batting_now")]
     other_batters = sorted([b for b in batters if not b.get("batting_now")], key=lambda x: x["runs"], reverse=True)
     display_batters = (active_batters + other_batters)[:4]
@@ -614,7 +584,6 @@ def render_bowlers(bowlers):
         st.markdown('<div class="card" style="color:#94A3B8;font-size:13px">Scorecard loading — data will appear shortly.</div>', unsafe_allow_html=True)
         return
 
-    # Take the top 4 bowlers to display in the highlights section
     active_bowlers = [b for b in bowlers if b.get("bowling_now")]
     other_bowlers = sorted([b for b in bowlers if not b.get("bowling_now")], key=lambda x: x["wkts"], reverse=True)
     display_bowlers = (active_bowlers + other_bowlers)[:4]
@@ -644,7 +613,6 @@ def render_bowlers(bowlers):
 def render_full_scorecard(batters, bowlers, sc):
     st.markdown('<div style="margin-top:15px;"></div>', unsafe_allow_html=True)
     with st.expander("📋 VIEW FULL SCORECARD DETAILS", expanded=False):
-        # Full Batting Table
         st.markdown(f'<div class="sh">🏏 BATTING — {sc["bat"]["short"]}</div>', unsafe_allow_html=True)
         grid = "2.4fr 2fr 45px 45px 45px 45px 55px"
         hdr = (f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
@@ -665,7 +633,6 @@ def render_full_scorecard(batters, bowlers, sc):
                      f'<div class="num">{sr}</div></div>')
         st.markdown(f'<div class="card" style="margin-bottom:20px;">{hdr}{rows}</div>', unsafe_allow_html=True)
 
-        # Full Bowling Table
         st.markdown(f'<div class="sh">🎯 BOWLING — {sc["field"]["short"]}</div>', unsafe_allow_html=True)
         grid = "2.4fr 55px 55px 55px 55px 70px"
         hdr = (f'<div class="tbl-hdr" style="display:grid;grid-template-columns:{grid}">'
@@ -729,11 +696,91 @@ def render_upcoming_match(news):
             f'</div>', unsafe_allow_html=True
         )
 
+# ── INJECTED: V4.4 AI ORACLE ──────────────────────────────────────────────────
+def render_ai_oracle(sc, batters, bowlers):
+    st.markdown('<div class="sh" style="margin-top:20px">&#9672; MICRO-BATTLE SIMULATOR (NEXT BALL)</div>', unsafe_allow_html=True)
+    
+    # Identify Active Striker and Bowler
+    striker = next((b for b in batters if b.get("batting_now")), batters[0] if batters else None)
+    current_bowler = next((b for b in bowlers if b.get("bowling_now")), bowlers[0] if bowlers else None)
+
+    if not striker or not current_bowler:
+        st.info("Live player data unavailable for micro-predictions.")
+        return
+
+    s_name = striker['name']; s_sr = striker['sr']; s_runs = striker['runs']
+    b_name = current_bowler['name']; b_econ = current_bowler['econ']; b_ov = current_bowler['overs']
+    phase = sc["phase"]
+
+    # AI Logic: Bowler Intent
+    if phase == "death": b_intent = "Wide Yorker / Slower Bouncer"; pace_pct = 40; var_pct = 60
+    elif phase == "powerplay": b_intent = "Hard Length / Swing"; pace_pct = 80; var_pct = 20
+    else: b_intent = "Good Length / Stump-to-Stump"; pace_pct = 60; var_pct = 40
+    
+    if b_econ < 6.0: b_intent += " (Highly Defensive)"
+    elif b_econ > 10.0: b_intent += " (Under Pressure, Expect Variation)"
+
+    # AI Logic: Batter Intent
+    if s_sr > 160: bat_intent = "Aggressive Aerial / Clear the Ropes"; atk_pct = 85; def_pct = 15
+    elif s_sr > 120: bat_intent = "Strike Rotation / Find the Gaps"; atk_pct = 55; def_pct = 45
+    else: bat_intent = "Consolidation / See Off the Over"; atk_pct = 30; def_pct = 70
+
+    # The Golden Prediction
+    if s_sr > 160 and b_econ < 6.5:
+        verdict = f"High-risk collision. {s_name} is striking aggressively, but {b_name} is bowling tight. Expect a high-variance outcome (Boundary or Wicket)."
+        gold_color = "#D97706"
+    elif s_sr > 150:
+        verdict = f"{s_name} has the upper hand. Expecting an attacking shot targeting the boundaries against {b_name}."
+        gold_color = "#16A34A"
+    elif b_econ < 6.0:
+        verdict = f"{b_name} is dominating this spell. Expect {s_name} to struggle to find timing. Dot ball or single highly likely."
+        gold_color = "#DC2626"
+    else:
+        verdict = f"Neutral state. Expect a standard delivery pushing for a single to rotate strike."
+        gold_color = "#38BDF8"
+
+    # UI Rendering
+    st.markdown(
+        f'<div class="oracle-box">'
+        f'<h3>LIVE HEAD-TO-HEAD ANALYSIS</h3>'
+        f'<div class="oracle-vs">'
+        f'<span style="color:#38BDF8">{s_name} <span style="font-size:14px; font-weight:400; color:#94A3B8;">(SR: {s_sr})</span></span>'
+        f'<span class="oracle-vs-vs">VS</span>'
+        f'<span style="color:#F472B6">{b_name} <span style="font-size:14px; font-weight:400; color:#94A3B8;">(Econ: {b_econ})</span></span>'
+        f'</div>'
+        f'<div style="display:flex; gap:20px; margin-top:20px;">'
+        
+        # Batter Card
+        f'<div style="flex:1; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
+        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; margin-bottom:5px;">Batter Intent Profile</div>'
+        f'<div style="font-size:14px; font-weight:600; color:white; margin-bottom:10px;">{bat_intent}</div>'
+        f'<div style="display:flex; justify-content:space-between; font-size:10px; color:#CBD5E1;"><span>Attack ({atk_pct}%)</span><span>Defend/Rotate ({def_pct}%)</span></div>'
+        f'<div class="intent-bar"><div class="intent-fill" style="width:{atk_pct}%; background:#38BDF8;"></div><div class="intent-fill" style="width:{def_pct}%; background:#475569;"></div></div>'
+        f'</div>'
+
+        # Bowler Card
+        f'<div style="flex:1; background:rgba(255,255,255,0.05); padding:15px; border-radius:8px;">'
+        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; margin-bottom:5px;">Bowler Tactical Profile</div>'
+        f'<div style="font-size:14px; font-weight:600; color:white; margin-bottom:10px;">{b_intent}</div>'
+        f'<div style="display:flex; justify-content:space-between; font-size:10px; color:#CBD5E1;"><span>Pace/Stock ({pace_pct}%)</span><span>Variation ({var_pct}%)</span></div>'
+        f'<div class="intent-bar"><div class="intent-fill" style="width:{pace_pct}%; background:#F472B6;"></div><div class="intent-fill" style="width:{var_pct}%; background:#475569;"></div></div>'
+        f'</div>'
+        
+        f'</div>'
+        
+        # Golden Prediction 
+        f'<div style="margin-top:20px; padding-top:15px; border-top:1px solid #334155;">'
+        f'<div style="font-size:11px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">🔮 The Golden Ball Prediction</div>'
+        f'<div style="font-size:16px; font-weight:500; color:{gold_color}; line-height:1.5;">{verdict}</div>'
+        f'</div>'
+        f'</div>', unsafe_allow_html=True
+    )
+
 # ── CONTROLS ──────────────────────────────────────────────────────────────────
 ca, cb, cc, cd, ce = st.columns([3,1,1,1,1])
 with ca:
     st.markdown('<div style="font-size:10px;color:#94A3B8;padding-top:12px">'
-                "GOD'S EYE v4.3 · © Uday Maddila</div>", unsafe_allow_html=True)
+                "GOD'S EYE v4.4 · © Uday Maddila</div>", unsafe_allow_html=True)
 with cb: auto_ref  = st.toggle("Auto-Refresh", value=True)
 with cc: pass 
 with cd: pass 
@@ -750,8 +797,8 @@ is_live = sc["phase"] != "completed"
 
 render_navbar(sc, is_live)
 
-# --- TABBED VIEW ---
-tab1, tab2 = st.tabs(["🔴 Live/Recent Match (RCB vs SRH)", "⏭️ Next Match Preview (MI vs KKR)"])
+# --- TABBED VIEW V4.4 ---
+tab1, tab2, tab3 = st.tabs(["🔴 Live/Recent Match", "⏭️ Next Match Preview", "🧠 AI Oracle (Predictive)"])
 
 with tab1:
     render_scoreboard(sc)
@@ -761,21 +808,22 @@ with tab1:
 
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     cl, cr = st.columns(2, gap="medium")
-    
-    # These functions now specifically filter the Top 4 highlights
     with cl: render_batters(batters)
     with cr: render_bowlers(bowlers)
 
-    # Injected V4.3 Full Scorecard Expander
     render_full_scorecard(batters, bowlers, sc)
 
 with tab2:
     render_upcoming_match(upcoming_news)
 
+with tab3:
+    # V4.4 Micro-prediction Engine
+    render_ai_oracle(sc, batters, bowlers)
+
 st.markdown(
     f'<div style="text-align:center;font-size:11px;color:#94A3B8;'
     f'margin-top:20px;padding-top:14px;border-top:1px solid #E2E8F0">'
-    f'GOD\'S EYE v4.3 · Data Engine: Direct Web Scraper · '
+    f'GOD\'S EYE v4.4 · Data Engine: Direct Web Scraper · '
     f'Last fetched: {datetime.now(pytz.timezone("Asia/Kolkata")).strftime("%H:%M:%S IST")} · '
     f'© Uday Maddila</div>',
     unsafe_allow_html=True)
